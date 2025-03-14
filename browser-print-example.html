@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Restaurant Print Agent - Browser Example</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .status-bar {
+        background-color: #f0f0f0;
+        padding: 10px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .status-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+      .status-disconnected {
+        background-color: #ff4d4d;
+      }
+      .status-connected {
+        background-color: #4caf50;
+      }
+      .status-connecting {
+        background-color: #ffc107;
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      button {
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+      }
+      .log-area {
+        background-color: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px;
+        height: 200px;
+        overflow-y: auto;
+        margin-top: 20px;
+        font-family: monospace;
+      }
+      .log-entry {
+        margin-bottom: 5px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 5px;
+      }
+      .tabs {
+        display: flex;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ddd;
+      }
+      .tab {
+        padding: 10px 20px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        border-bottom: none;
+        margin-right: 5px;
+        border-radius: 4px 4px 0 0;
+      }
+      .tab.active {
+        background-color: #f0f0f0;
+        border-color: #ddd;
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Restaurant Print Agent - Browser Example</h1>
+
+    <div class="status-bar">
+      <div>
+        <span
+          class="status-indicator status-disconnected"
+          id="statusIndicator"
+        ></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+      <button id="connectBtn">Connect</button>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="receipt">Receipt</div>
+      <div class="tab" data-tab="kot">KOT</div>
+    </div>
+
+    <div class="tab-content active" id="receipt-tab">
+      <h2>Print Receipt</h2>
+
+      <div class="form-group">
+        <label for="receiptPrinter">Printer:</label>
+        <select id="receiptPrinter" disabled>
+          <option value="">Select a printer...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="restaurantName">Restaurant Name:</label>
+        <input type="text" id="restaurantName" value="My Restaurant" />
+      </div>
+
+      <div class="form-group">
+        <label for="address">Address:</label>
+        <input type="text" id="address" value="123 Main St, City" />
+      </div>
+
+      <div class="form-group">
+        <label for="gstin">GSTIN:</label>
+        <input type="text" id="gstin" value="22AAAAA0000A1Z5" />
+      </div>
+
+      <div class="form-group">
+        <label for="invoiceNumber">Invoice Number:</label>
+        <input type="text" id="invoiceNumber" value="INV-001" />
+      </div>
+
+      <div class="form-group">
+        <label for="customerName">Customer Name:</label>
+        <input type="text" id="customerName" value="John Doe" />
+      </div>
+
+      <div class="form-group">
+        <label for="orderType">Order Type:</label>
+        <select id="orderType">
+          <option value="DINE_IN">Dine In</option>
+          <option value="TAKEAWAY">Takeaway</option>
+          <option value="DELIVERY">Delivery</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="items">Items (JSON format):</label>
+        <textarea id="items" rows="5">
+[
+  {"name": "Butter Chicken", "price": 250, "quantity": 1},
+  {"name": "Naan", "price": 30, "quantity": 2},
+  {"name": "Soft Drink", "price": 60, "quantity": 1}
+]</textarea
+        >
+      </div>
+
+      <div class="form-group">
+        <label for="subTotal">Subtotal:</label>
+        <input type="number" id="subTotal" value="370" />
+      </div>
+
+      <div class="form-group">
+        <label for="discount">Discount (%):</label>
+        <input type="number" id="discount" value="5" />
+      </div>
+
+      <div class="form-group">
+        <label for="sgst">SGST (2.5%):</label>
+        <input type="number" id="sgst" value="8.75" />
+      </div>
+
+      <div class="form-group">
+        <label for="cgst">CGST (2.5%):</label>
+        <input type="number" id="cgst" value="8.75" />
+      </div>
+
+      <div class="form-group">
+        <label for="rounded">Rounded:</label>
+        <input type="number" id="rounded" value="0.5" />
+      </div>
+
+      <div class="form-group">
+        <label for="total">Total:</label>
+        <input type="number" id="total" value="368" />
+      </div>
+
+      <button id="printReceiptBtn" disabled>Print Receipt</button>
+    </div>
+
+    <div class="tab-content" id="kot-tab">
+      <h2>Print KOT</h2>
+
+      <div class="form-group">
+        <label for="kotPrinter">Printer:</label>
+        <select id="kotPrinter" disabled>
+          <option value="">Select a printer...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="kotRestaurantName">Restaurant Name:</label>
+        <input type="text" id="kotRestaurantName" value="My Restaurant" />
+      </div>
+
+      <div class="form-group">
+        <label for="kotNumber">KOT Number:</label>
+        <input type="text" id="kotNumber" value="KOT-001" />
+      </div>
+
+      <div class="form-group">
+        <label for="kotType">KOT Type:</label>
+        <select id="kotType">
+          <option value="NEW">New</option>
+          <option value="MODIFIED">Modified</option>
+          <option value="CANCELLED">Cancelled</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="kotCustomerName">Customer Name:</label>
+        <input type="text" id="kotCustomerName" value="John Doe" />
+      </div>
+
+      <div class="form-group">
+        <label for="kotOrderType">Order Type:</label>
+        <select id="kotOrderType">
+          <option value="DINE_IN">Dine In</option>
+          <option value="TAKEAWAY">Takeaway</option>
+          <option value="DELIVERY">Delivery</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="waiterName">Waiter Name:</label>
+        <input type="text" id="waiterName" value="Robert" />
+      </div>
+
+      <div class="form-group">
+        <label for="kotItems">Items (JSON format):</label>
+        <textarea id="kotItems" rows="5">
+[
+  {"name": "Butter Chicken", "quantity": 1, "status": "NEW"},
+  {"name": "Naan", "quantity": 2, "status": "NEW"},
+  {"name": "Soft Drink", "quantity": 1, "status": "NEW"}
+]</textarea
+        >
+      </div>
+
+      <div class="form-group">
+        <label for="totalItems">Total Items:</label>
+        <input type="number" id="totalItems" value="3" />
+      </div>
+
+      <div class="form-group">
+        <label for="chefInstructions">Chef Instructions:</label>
+        <textarea id="chefInstructions" rows="3">
+Make the butter chicken less spicy.</textarea
+        >
+      </div>
+
+      <button id="printKotBtn" disabled>Print KOT</button>
+    </div>
+
+    <div class="log-area" id="logArea"></div>
+
+    <script src="browser-print-client.js"></script>
+    <script>
+      // DOM Elements
+      const statusIndicator = document.getElementById("statusIndicator");
+      const statusText = document.getElementById("statusText");
+      const connectBtn = document.getElementById("connectBtn");
+      const receiptPrinter = document.getElementById("receiptPrinter");
+      const kotPrinter = document.getElementById("kotPrinter");
+      const printReceiptBtn = document.getElementById("printReceiptBtn");
+      const printKotBtn = document.getElementById("printKotBtn");
+      const logArea = document.getElementById("logArea");
+      const tabs = document.querySelectorAll(".tab");
+      const tabContents = document.querySelectorAll(".tab-content");
+
+      // Initialize PrintClient
+      let printClient = null;
+
+      // Log function
+      function log(message) {
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        logArea.appendChild(entry);
+        logArea.scrollTop = logArea.scrollHeight;
+      }
+
+      // Update UI based on connection status
+      function updateStatus(status) {
+        statusIndicator.className = "status-indicator";
+
+        switch (status) {
+          case "connected":
+            statusIndicator.classList.add("status-connected");
+            statusText.textContent = "Connected";
+            connectBtn.textContent = "Disconnect";
+            receiptPrinter.disabled = false;
+            kotPrinter.disabled = false;
+            printReceiptBtn.disabled = false;
+            printKotBtn.disabled = false;
+            break;
+          case "disconnected":
+            statusIndicator.classList.add("status-disconnected");
+            statusText.textContent = "Disconnected";
+            connectBtn.textContent = "Connect";
+            receiptPrinter.disabled = true;
+            kotPrinter.disabled = true;
+            printReceiptBtn.disabled = true;
+            printKotBtn.disabled = true;
+            break;
+          case "connecting":
+            statusIndicator.classList.add("status-connecting");
+            statusText.textContent = "Connecting...";
+            connectBtn.disabled = true;
+            break;
+          default:
+            break;
+        }
+      }
+
+      // Update printer select options
+      function updatePrinters(printers) {
+        // Clear existing options
+        receiptPrinter.innerHTML =
+          '<option value="">Select a printer...</option>';
+        kotPrinter.innerHTML = '<option value="">Select a printer...</option>';
+
+        // Add new options
+        printers.forEach((printer) => {
+          const option1 = document.createElement("option");
+          option1.value = printer.id;
+          option1.textContent = printer.name || printer.id;
+          receiptPrinter.appendChild(option1);
+
+          const option2 = document.createElement("option");
+          option2.value = printer.id;
+          option2.textContent = printer.name || printer.id;
+          kotPrinter.appendChild(option2);
+        });
+
+        log(`Updated printers: ${printers.length} found`);
+      }
+
+      // Connect/Disconnect button handler
+      connectBtn.addEventListener("click", () => {
+        if (printClient && printClient.connected) {
+          printClient.disconnect();
+          updateStatus("disconnected");
+          log("Disconnected from print agent");
+        } else {
+          initPrintClient();
+        }
+      });
+
+      // Initialize print client
+      function initPrintClient() {
+        // Create new PrintClient instance
+        printClient = new PrintClient({
+          agentUrl: "ws://localhost:3000",
+          debug: true,
+          onStatusChange: (status) => {
+            log(`Status changed: ${status}`);
+            updateStatus(status);
+
+            if (status === "printers_updated") {
+              updatePrinters(printClient.printers);
+            }
+          },
+          onError: (error) => {
+            log(`Error: ${error.message}`);
+          },
+          onConnect: () => {
+            log("Connected to print agent");
+            connectBtn.disabled = false;
+          },
+          onDisconnect: () => {
+            log("Disconnected from print agent");
+            connectBtn.disabled = false;
+          },
+        });
+
+        // Connect to print agent
+        updateStatus("connecting");
+        printClient.connect().catch((error) => {
+          log(`Connection error: ${error.message}`);
+          updateStatus("disconnected");
+          connectBtn.disabled = false;
+        });
+      }
+
+      // Print receipt button handler
+      printReceiptBtn.addEventListener("click", () => {
+        const printerId = receiptPrinter.value;
+
+        if (!printerId) {
+          log("Error: Please select a printer");
+          return;
+        }
+
+        try {
+          // Parse items
+          const items = JSON.parse(document.getElementById("items").value);
+
+          // Create receipt content
+          const content = {
+            header: {
+              restaurantName: document.getElementById("restaurantName").value,
+              address: document.getElementById("address").value,
+              gstin: document.getElementById("gstin").value,
+              invoice: document.getElementById("invoiceNumber").value,
+              customerName: document.getElementById("customerName").value,
+              orderType: document.getElementById("orderType").value,
+              date: new Date().toLocaleString(),
+            },
+            items: items,
+            summary: {
+              subTotal: parseFloat(document.getElementById("subTotal").value),
+              discount: parseFloat(document.getElementById("discount").value),
+              discountAmount:
+                (parseFloat(document.getElementById("subTotal").value) *
+                  parseFloat(document.getElementById("discount").value)) /
+                100,
+              sgst: parseFloat(document.getElementById("sgst").value),
+              cgst: parseFloat(document.getElementById("cgst").value),
+              rounded: parseFloat(document.getElementById("rounded").value),
+              total: parseFloat(document.getElementById("total").value),
+            },
+          };
+
+          log("Sending receipt print job...");
+
+          // Send print job
+          printClient
+            .printReceipt({ printerId, content })
+            .then(() => {
+              log("Receipt print job sent successfully");
+            })
+            .catch((error) => {
+              log(`Error sending receipt print job: ${error.message}`);
+            });
+        } catch (error) {
+          log(`Error preparing receipt data: ${error.message}`);
+        }
+      });
+
+      // Print KOT button handler
+      printKotBtn.addEventListener("click", () => {
+        const printerId = kotPrinter.value;
+
+        if (!printerId) {
+          log("Error: Please select a printer");
+          return;
+        }
+
+        try {
+          // Parse items
+          const items = JSON.parse(document.getElementById("kotItems").value);
+
+          // Create KOT content
+          const content = {
+            header: {
+              restaurantName:
+                document.getElementById("kotRestaurantName").value,
+              kotNumber: document.getElementById("kotNumber").value,
+              kotType: document.getElementById("kotType").value,
+              customerName: document.getElementById("kotCustomerName").value,
+              orderType: document.getElementById("kotOrderType").value,
+              waiterName: document.getElementById("waiterName").value,
+              date: new Date().toLocaleString(),
+            },
+            items: items,
+            footer: {
+              totalItems: parseInt(
+                document.getElementById("totalItems").value,
+                10
+              ),
+            },
+            note: document.getElementById("chefInstructions").value,
+          };
+
+          log("Sending KOT print job...");
+
+          // Send print job
+          printClient
+            .printKOT({ printerId, content })
+            .then(() => {
+              log("KOT print job sent successfully");
+            })
+            .catch((error) => {
+              log(`Error sending KOT print job: ${error.message}`);
+            });
+        } catch (error) {
+          log(`Error preparing KOT data: ${error.message}`);
+        }
+      });
+
+      // Tab switching
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          // Remove active class from all tabs and contents
+          tabs.forEach((t) => t.classList.remove("active"));
+          tabContents.forEach((c) => c.classList.remove("active"));
+
+          // Add active class to clicked tab and corresponding content
+          tab.classList.add("active");
+          document
+            .getElementById(`${tab.dataset.tab}-tab`)
+            .classList.add("active");
+        });
+      });
+
+      // Initialize on page load
+      document.addEventListener("DOMContentLoaded", () => {
+        updateStatus("disconnected");
+        log('Page loaded. Click "Connect" to connect to the print agent.');
+      });
+    </script>
+  </body>
+</html>
