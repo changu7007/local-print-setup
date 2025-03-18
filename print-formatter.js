@@ -11,9 +11,10 @@ class PrintFormatter {
     this.config = {
       lineWidth: config.lineWidth || 384,
       charsPerLine: config.charsPerLine || 32,
-      normalSize: config.normalSize || "normal",
-      largeSize: config.largeSize || "normal",
-      smallSize: config.smallSize || "small",
+      normalSize: config.normalSize || 0, // Normal size (0)
+      largeSize: config.largeSize || 24, // Double width and height (24)
+      mediumSize: config.mediumSize || 16, // Double height (16)
+      smallSize: config.smallSize || 0, // Normal size (0)
       ...config,
     };
   }
@@ -352,43 +353,96 @@ class PrintFormatter {
     const LEFT = `${ESC}a\x00`;
     const BOLD_ON = `${ESC}E\x01`;
     const BOLD_OFF = `${ESC}E\x00`;
-    const DOUBLE_WIDTH = `${ESC}!\x20`;
-    const NORMAL_WIDTH = `${ESC}!\x00`;
     const INIT = `${ESC}@`; // Initialize printer
     const CUT = `${ESC}d\x03`; // Cut paper with 3-line feed
+    const BEEP = `${ESC}B\x02\x01`; // Beep sound (2 beeps, 1 duration)
+
+    // Font size commands - using fixed hex values
+    const NORMAL_SIZE = `${ESC}!\x00`; // Normal size
+    const LARGE_SIZE = `${ESC}!\x18`; // Double height and width (24 = 0x18)
+    const MEDIUM_SIZE = `${ESC}!\x10`; // Double height (16 = 0x10)
+    const SMALL_SIZE = `${ESC}!\x00`; // Small size (0 = 0x00)
 
     // Initialize printer
     output += INIT;
-    output += "\n";
+    output += "\n"; // Extra spacing at the top
 
-    // Center KOT ORDER with bold and double width
-    output += CENTER + BOLD_ON + "KOT ORDER" + BOLD_OFF + "\n";
+    // Center KOT ORDER with bold and large size
+    // output +=
+    //   CENTER +
+    //   BOLD_ON +
+    //   LARGE_SIZE +
+    //   "KOT ORDER" +
+    //   NORMAL_SIZE +
+    //   BOLD_OFF +
+    //   "\n";
 
     // KOT Type
-    output += CENTER + BOLD_ON + `(${header.kotType})` + BOLD_OFF + "\n";
+    output +=
+      CENTER +
+      BOLD_ON +
+      MEDIUM_SIZE +
+      `(${header.kotType})` +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
 
     // Restaurant name
     output +=
-      CENTER + BOLD_ON + header.restaurantName.toUpperCase() + BOLD_OFF + "\n";
+      CENTER +
+      BOLD_ON +
+      MEDIUM_SIZE +
+      header.restaurantName.toUpperCase() +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n\n";
 
     // Divider
     output += LEFT + this.divider() + "\n";
 
-    // KOT details
-    output += LEFT + this.keyValue("KOT No:", header.kotNumber || "N/A") + "\n";
-    output += LEFT + this.keyValue("To:", header.customerName) + "\n";
-    output += LEFT + this.keyValue("Type:", header.orderType) + "\n";
-    output += LEFT + this.keyValue("Date:", header.date) + "\n";
+    // KOT details with extra spacing
+    output +=
+      LEFT +
+      BOLD_ON +
+      MEDIUM_SIZE +
+      this.keyValue("KOT No:", header.kotNumber || "N/A") +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
+    output +=
+      LEFT +
+      BOLD_ON +
+      NORMAL_SIZE +
+      this.keyValue("To:", header.customerName) +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
+    output +=
+      LEFT +
+      BOLD_ON +
+      MEDIUM_SIZE +
+      this.keyValue("Type:", header.orderType) +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
+    output +=
+      LEFT +
+      BOLD_ON +
+      NORMAL_SIZE +
+      this.keyValue("Date:", header.date) +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
 
     // Divider
     output += LEFT + this.divider() + "\n";
 
-    // Add table header with bold
+    // Add table header with bold and medium size
     output +=
       LEFT + BOLD_ON + "Item                Qty   Status" + BOLD_OFF + "\n";
     output += LEFT + this.divider() + "\n";
 
-    // Add items with proper spacing
+    // Add items with proper spacing and capitalization
     if (items && items.length > 0) {
       items.forEach((item) => {
         // Get status indicator if available
@@ -404,14 +458,25 @@ class PrintFormatter {
         const nameWidth = Math.max(10, this.config.charsPerLine - 12); // Reserve space for qty and status
 
         // Format the item name with proper wrapping if needed
-        const name = item.name.trim();
+        // Convert item name to uppercase for better visibility
+        const name = item.name.trim().toUpperCase();
+
         if (name.length <= nameWidth) {
           // Simple case: name fits on one line
           const paddedName = name.padEnd(nameWidth, " ");
           const qty = (item.quantity?.toString() || "0").padStart(3, " ");
           const status = statusDisplay.padStart(6, " ");
 
-          output += LEFT + paddedName + qty + status + "\n";
+          output +=
+            LEFT +
+            MEDIUM_SIZE + // Use medium size for item names
+            paddedName +
+            BOLD_ON +
+            qty +
+            BOLD_OFF +
+            status +
+            NORMAL_SIZE +
+            "\n";
         } else {
           // Complex case: name needs to be wrapped
           const firstLine = name.substring(0, nameWidth);
@@ -420,17 +485,36 @@ class PrintFormatter {
           // First line with quantity and status
           const qty = (item.quantity?.toString() || "0").padStart(3, " ");
           const status = statusDisplay.padStart(6, " ");
-          output += LEFT + firstLine + qty + status + "\n";
+
+          output +=
+            LEFT +
+            MEDIUM_SIZE + // Use medium size for item names
+            firstLine +
+            BOLD_ON +
+            qty +
+            BOLD_OFF +
+            status +
+            NORMAL_SIZE +
+            "\n";
 
           // Additional lines for the wrapped text, if any
           if (remainingText) {
             // Split remaining text into chunks of nameWidth
             for (let i = 0; i < remainingText.length; i += nameWidth) {
               const chunk = remainingText.substring(i, i + nameWidth);
-              output += LEFT + chunk.padEnd(nameWidth, " ") + "      " + "\n"; // Add spacing where qty and status would be
+              output +=
+                LEFT +
+                MEDIUM_SIZE + // Use medium size for item names
+                chunk.padEnd(nameWidth, " ") +
+                "      " +
+                NORMAL_SIZE +
+                "\n"; // Add spacing where qty and status would be
             }
           }
         }
+
+        // Add extra spacing between items
+        output += "\n";
       });
     }
 
@@ -440,28 +524,55 @@ class PrintFormatter {
     if (footer?.totalItems) {
       output +=
         LEFT +
+        BOLD_ON +
+        NORMAL_SIZE +
         this.keyValue("Total Items:", footer.totalItems.toString()) +
+        NORMAL_SIZE +
+        BOLD_OFF +
         "\n";
     }
 
     // Divider for ordered by section
-    output += "\n";
     output += LEFT + this.divider() + "\n";
 
     // Ordered By section
     if (orderedBy) {
-      output += LEFT + this.keyValue("Ordered By:", orderedBy) + "\n";
+      output +=
+        LEFT +
+        BOLD_ON +
+        this.keyValue("Ordered By:", orderedBy) +
+        BOLD_OFF +
+        "\n\n";
     } else if (header.waiterName) {
-      output += LEFT + this.keyValue("Ordered By:", header.waiterName) + "\n";
+      output +=
+        LEFT +
+        BOLD_ON +
+        this.keyValue("Ordered By:", header.waiterName) +
+        BOLD_OFF +
+        "\n\n";
+    }
+
+    if (note) {
+      output +=
+        LEFT +
+        BOLD_ON +
+        NORMAL_SIZE +
+        this.keyValue("Cheff Note:", note) +
+        NORMAL_SIZE +
+        BOLD_OFF +
+        "\n\n";
     }
 
     // Thank you
-    output += "\n";
-    output += CENTER + "Thank you!" + "\n";
-    output += "\n\n";
+    // output += "\n";
+    // output += CENTER + MEDIUM_SIZE + "Thank you!" + NORMAL_SIZE + "\n";
+    // output += "\n\n";
+
+    // Add beep sound
+    output += BEEP;
 
     // Cut paper
-    output += CUT;
+    // output += CUT;
 
     return output;
   }
@@ -475,49 +586,168 @@ class PrintFormatter {
     const { header, items, summary } = content;
     let output = "";
 
+    // ESC/POS commands for text alignment and formatting
+    const ESC = "\x1B";
+    const CENTER = `${ESC}a\x01`;
+    const LEFT = `${ESC}a\x00`;
+    const BOLD_ON = `${ESC}E\x01`;
+    const BOLD_OFF = `${ESC}E\x00`;
+    const INIT = `${ESC}@`; // Initialize printer
+    const BEEP = `${ESC}B\x02\x01`; // Beep sound (2 beeps, 1 duration)
+
+    // Font size commands - using fixed hex values
+    const NORMAL_SIZE = `${ESC}!\x00`; // Normal size
+    const LARGE_SIZE = `${ESC}!\x18`; // Double height and width (24 = 0x18)
+    const MEDIUM_SIZE = `${ESC}!\x10`; // Double height (16 = 0x10)
+    const SMALL_SIZE = `${ESC}!\x00`; // Small size (0 = 0x00)
+
     // Initialize
-    output += "\n";
+    output += INIT;
+    output += "\n\n"; // Extra spacing at the top
 
     // Bill header
-    output += this.center(`BILL: ${header.invoice || ""}`) + "\n";
-    output += this.center(header.restaurantName.toUpperCase()) + "\n";
+    output +=
+      CENTER +
+      BOLD_ON +
+      NORMAL_SIZE +
+      `BILL: ${header.invoice || ""}` +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
+    output +=
+      CENTER +
+      BOLD_ON +
+      LARGE_SIZE +
+      header.restaurantName.toUpperCase() +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
 
     if (header.address) {
-      output += this.center(header.address) + "\n";
+      output += CENTER + header.address + "\n";
     }
 
     if (header.gstin) {
-      output += this.center(`GSTIN: ${header.gstin}`) + "\n";
+      output += CENTER + `GSTIN: ${header.gstin}` + "\n";
+    }
+
+    if (header.phone) {
+      output += CENTER + `Phone: ${header.phone}` + "\n";
+    }
+
+    if (header.email) {
+      output += CENTER + `Email: ${header.email}` + "\n\n";
     }
 
     // Divider
     output += this.divider() + "\n";
 
-    // Bill details
-    output += this.keyValue("Customer", header.customerName) + "\n";
+    // Bill details with extra spacing
+    output +=
+      BOLD_ON +
+      this.keyValue("Customer", header.customerName) +
+      BOLD_OFF +
+      "\n";
     output += this.keyValue("Type", header.orderType) + "\n";
     output += this.keyValue("Date", header.date) + "\n";
 
     // Divider
     output += this.divider() + "\n";
 
-    // Add table with proper formatting
+    // Add table header with bold and medium size
+    output +=
+      LEFT +
+      BOLD_ON +
+      "Item                  Price      Qty   Total" +
+      BOLD_OFF +
+      "\n";
+
+    output += this.divider() + "\n";
+
+    // Add items with proper formatting and extra spacing
     if (items && items.length > 0) {
-      const tableRows = this.formatBillTable(items);
-      tableRows.forEach((row) => {
-        output += row + "\n";
+      items.forEach((item) => {
+        const total = (item.price || 0) * (item.quantity || 0);
+
+        // Calculate available width for item name
+        const nameWidth = Math.max(10, this.config.charsPerLine - 22); // Reserve space for price, qty, total
+
+        // Format the item name with proper wrapping if needed
+        // Convert item name to uppercase for better visibility
+        const name = item.name.trim();
+
+        if (name.length <= nameWidth) {
+          // Simple case: name fits on one line
+          const paddedName = name.padEnd(nameWidth, " ");
+          const price = `Rs.${item.price || 0}`.padStart(8, " ");
+          const qty = (item.quantity?.toString() || "0").padStart(3, " ");
+          const totalStr = `Rs.${total.toFixed(2)}`.padStart(10, " ");
+
+          output +=
+            LEFT +
+            NORMAL_SIZE + // Use medium size for item names
+            paddedName +
+            price +
+            BOLD_ON +
+            qty +
+            BOLD_OFF +
+            totalStr +
+            NORMAL_SIZE +
+            "\n";
+        } else {
+          // Complex case: name needs to be wrapped
+          const firstLine = name.substring(0, nameWidth);
+          const remainingText = name.substring(nameWidth);
+
+          const price = `Rs.${item.price || 0}`.padStart(8, " ");
+          const qty = (item.quantity?.toString() || "0").padStart(3, " ");
+          const totalStr = `Rs.${total.toFixed(2)}`.padStart(10, " ");
+
+          output +=
+            LEFT +
+            NORMAL_SIZE + // Use medium size for item names
+            firstLine +
+            price +
+            BOLD_ON +
+            qty +
+            BOLD_OFF +
+            totalStr +
+            NORMAL_SIZE +
+            "\n";
+
+          // Additional lines for the wrapped text, if any
+          if (remainingText) {
+            // Split remaining text into chunks of nameWidth
+            for (let i = 0; i < remainingText.length; i += nameWidth) {
+              const chunk = remainingText.substring(i, i + nameWidth);
+              output +=
+                LEFT +
+                NORMAL_SIZE + // Use medium size for item names
+                chunk.padEnd(nameWidth - 4, " ") +
+                "                 " +
+                NORMAL_SIZE +
+                "\n"; // Add spacing where price, qty, total would be
+            }
+          }
+        }
+
+        // Add extra spacing between items
+        output += "\n";
       });
     }
 
-    // Summary
+    // Summary with improved formatting
     if (summary) {
       output += this.formatBillSummary(summary);
     }
 
     // Thank you
     output += "\n";
-    output += this.center("Thank you!") + "\n";
+    output += CENTER + MEDIUM_SIZE + "Thank you!" + NORMAL_SIZE + "\n";
     output += "\n\n\n";
+
+    // Add beep sound
+    output += BEEP;
 
     return output;
   }
@@ -528,11 +758,21 @@ class PrintFormatter {
    * @returns {string} Formatted bill summary
    */
   formatBillSummary(summary) {
+    // ESC/POS commands for text alignment and formatting
+    const ESC = "\x1B";
+    const BOLD_ON = `${ESC}E\x01`;
+    const BOLD_OFF = `${ESC}E\x00`;
+    const MEDIUM_SIZE = `${ESC}!\x10`; // Double height (16 = 0x10)
+    const NORMAL_SIZE = `${ESC}!\x00`; // Normal size
+
     let output = "";
 
     output += this.divider() + "\n";
     output +=
-      this.keyValue("Subtotal", `Rs.${summary.subTotal.toFixed(2)}`) + "\n";
+      BOLD_ON +
+      this.keyValue("Subtotal", `Rs.${summary.subTotal.toFixed(2)}`) +
+      BOLD_OFF +
+      "\n";
 
     output += this.divider() + "\n";
     output +=
@@ -545,16 +785,20 @@ class PrintFormatter {
     output +=
       this.keyValue("SGST (2.5%)", `Rs.${(summary.sgst || 0).toFixed(2)}`) +
       "\n";
-
     output +=
       this.keyValue("CGST (2.5%)", `Rs.${(summary.cgst || 0).toFixed(2)}`) +
       "\n";
-
     output +=
       this.keyValue("Round Off", `-Rs.${summary.rounded.toFixed(2)}`) + "\n";
 
     output += this.divider() + "\n";
-    output += this.keyValue("Total", `Rs.${summary.total.toFixed(2)}`) + "\n";
+    output +=
+      BOLD_ON +
+      MEDIUM_SIZE +
+      this.keyValue("Total", `Rs.${summary.total.toFixed(2)}`) +
+      NORMAL_SIZE +
+      BOLD_OFF +
+      "\n";
 
     // Payment details
     if (summary.payment) {

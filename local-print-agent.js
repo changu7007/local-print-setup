@@ -53,23 +53,26 @@ const formatRules = {
   MM_58: {
     lineWidth: 384,
     charsPerLine: 32,
-    normalSize: "normal",
-    largeSize: "normal",
-    smallSize: "small",
+    normalSize: 0, // Updated to numeric values
+    largeSize: 24, // Double width and height (24)
+    mediumSize: 16, // Double height (16)
+    smallSize: 0, // Normal size (0)
   },
   MM_80: {
     lineWidth: 576,
     charsPerLine: 48,
-    normalSize: "normal",
-    largeSize: "normal",
-    smallSize: "small",
+    normalSize: 0, // Updated to numeric values
+    largeSize: 24, // Double width and height (24)
+    mediumSize: 16, // Double height (16)
+    smallSize: 0, // Normal size (0)
   },
   MM_76: {
     lineWidth: 512,
     charsPerLine: 42,
-    normalSize: "normal",
-    largeSize: "normal",
-    smallSize: "small",
+    normalSize: 0, // Updated to numeric values
+    largeSize: 24, // Double width and height (24)
+    mediumSize: 16, // Double height (16)
+    smallSize: 0, // Normal size (0)
   },
 };
 
@@ -191,6 +194,31 @@ async function updateJobStatus(
   } catch (error) {
     console.error(`Error updating job status: ${error.message}`);
   }
+}
+
+// Add this function to extract paper width from various request formats
+function extractPaperWidth(job) {
+  // Check all possible locations for paperWidth
+  if (job.options && job.options.paperWidth) {
+    return job.options.paperWidth;
+  }
+
+  if (job.content && job.content.options && job.content.options.paperWidth) {
+    return job.content.options.paperWidth;
+  }
+
+  // For mobile requests that might have a different structure
+  if (
+    job.content &&
+    job.content.content &&
+    job.content.content.options &&
+    job.content.content.options.paperWidth
+  ) {
+    return job.content.content.options.paperWidth;
+  }
+
+  // Default to MM_58 if not found
+  return "MM_80";
 }
 
 /**
@@ -471,10 +499,18 @@ async function processJob(job) {
       }
     }
 
-    // Determine paper width from printer config or options or default to MM_58
-    const paperWidth =
-      options.paperWidth || printerConfig.paperWidth || "MM_58";
-    formatter.updateConfig(formatRules[paperWidth]);
+    // Extract paper width from the job
+    const paperWidth = extractPaperWidth(job);
+    console.log(
+      `Using paper width: ${paperWidth} for job:`,
+      job.id || "unknown"
+    );
+
+    // Get format rules for the paper width
+    const formatConfig = formatRules[paperWidth] || formatRules.MM_58;
+
+    // Update formatter configuration
+    formatter.updateConfig(formatConfig);
 
     // Format the content based on type
     let formattedContent = "";
@@ -718,47 +754,28 @@ function connectWebSocket() {
       );
     });
 
-    ws.on("message", async (data) => {
+    ws.on("message", async (message) => {
       try {
-        const message = JSON.parse(data);
-        logger.debug("Received WebSocket message:", message);
+        const data = JSON.parse(message);
 
-        if (
-          message.message === "print_job" &&
-          message.data?.type === "print_job"
-        ) {
-          // Get the print job data
-          const printJob = message.data.data;
-
-          // Log the received print job
+        if (data.type === "print") {
           logger.info(
-            "Received print job via WebSocket:",
-            JSON.stringify(printJob).substring(0, 100) + "..."
+            `Received print job via WebSocket: ${message.substring(0, 100)}...`
           );
 
-          // Check if the content is a direct JSON object (not a string)
-          if (
-            printJob &&
-            printJob.content &&
-            typeof printJob.content === "object"
-          ) {
-            // If it's already an object, we need to format it properly
-            logger.info(
-              "Print job content is already an object, formatting for printing"
-            );
+          // Create a job object
+          const job = {
+            id: "ws-" + Date.now(),
+            printerId: data.printerId,
+            content: data.content,
+            options: data.options || {}, // Ensure options exists
+          };
 
-            // Create a properly formatted job with the content
-            const formattedJob = {
-              ...printJob,
-              // Ensure the content is properly structured
-              content: printJob.content,
-            };
+          // Process the job
+          await processJob(job);
 
-            await processJob(formattedJob);
-          } else {
-            // Process the job as is
-            await processJob(printJob);
-          }
+          // Send success response
+          ws.send(JSON.stringify({ success: true }));
         }
       } catch (error) {
         logger.error("Error processing WebSocket message:", error);
