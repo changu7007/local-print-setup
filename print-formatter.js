@@ -439,7 +439,11 @@ class PrintFormatter {
 
     // Add table header with bold and medium size
     output +=
-      LEFT + BOLD_ON + "Item                Qty   Status" + BOLD_OFF + "\n";
+      LEFT +
+      BOLD_ON +
+      "Item                                Qty Status" +
+      BOLD_OFF +
+      "\n";
     output += LEFT + this.divider() + "\n";
 
     // Add items with proper spacing and capitalization
@@ -623,6 +627,10 @@ class PrintFormatter {
       BOLD_OFF +
       "\n";
 
+    if (header.description) {
+      output += CENTER + header.description + "\n";
+    }
+
     if (header.address) {
       output += CENTER + header.address + "\n";
     }
@@ -631,12 +639,12 @@ class PrintFormatter {
       output += CENTER + `GSTIN: ${header.gstin}` + "\n";
     }
 
-    if (header.phone) {
-      output += CENTER + `Phone: ${header.phone}` + "\n";
+    if (header.phoneNo) {
+      output += CENTER + `${header.phoneNo}` + "\n";
     }
 
     if (header.email) {
-      output += CENTER + `Email: ${header.email}` + "\n\n";
+      output += CENTER + `${header.email}` + "\n\n";
     }
 
     // Divider
@@ -658,7 +666,7 @@ class PrintFormatter {
     output +=
       LEFT +
       BOLD_ON +
-      "Item                  Price      Qty   Total" +
+      "Item                     Price  Qty  Total" +
       BOLD_OFF +
       "\n";
 
