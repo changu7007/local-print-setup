@@ -666,7 +666,7 @@ class PrintFormatter {
     output +=
       LEFT +
       BOLD_ON +
-      "Item                     Price  Qty  Total" +
+      "Item                         Price  Qty  Total" +
       BOLD_OFF +
       "\n";
 
@@ -687,9 +687,9 @@ class PrintFormatter {
         if (name.length <= nameWidth) {
           // Simple case: name fits on one line
           const paddedName = name.padEnd(nameWidth, " ");
-          const price = `Rs.${item.price || 0}`.padStart(8, " ");
+          const price = `${item.price || 0}`.padStart(8, " ");
           const qty = (item.quantity?.toString() || "0").padStart(3, " ");
-          const totalStr = `Rs.${total.toFixed(2)}`.padStart(10, " ");
+          const totalStr = `${total.toFixed(2)}`.padStart(10, " ");
 
           output +=
             LEFT +
