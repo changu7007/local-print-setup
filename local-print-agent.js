@@ -519,9 +519,15 @@ async function processJob(job) {
     if (content && content.type && content.content) {
       console.log(`Formatting structured ${content.type} content`);
       if (content.type === "KOT") {
-        formattedContent = formatter.formatKOTContent(content.content);
+        formattedContent = await formatter.printContentAsImage(
+          content.content,
+          "kot"
+        );
       } else if (content.type === "BILL") {
-        formattedContent = formatter.formatBillContent(content.content);
+        formattedContent = await formatter.printContentAsImage(
+          content.content,
+          "bill"
+        );
       } else {
         console.warn(`Unknown content type: ${content.type}`);
         // Try to format as generic content

@@ -1,20 +1,17 @@
 /**
  * Print Formatter
  *
- * This utility provides formatting functions that match the ContentFormatter class
- * from the print-service.ts file to ensure consistent print output.
+ * This utility provides HTML-to-image based printing for thermal printers
+ * using ESC/POS commands.
  */
 
 class PrintFormatter {
   constructor(config = {}) {
-    // Default configuration matching the MM_58 format from print-service.ts
+    // Default configuration for the printer
     this.config = {
-      lineWidth: config.lineWidth || 384,
-      charsPerLine: config.charsPerLine || 32,
-      normalSize: config.normalSize || 0, // Normal size (0)
-      largeSize: config.largeSize || 24, // Double width and height (24)
-      mediumSize: config.mediumSize || 16, // Double height (16)
-      smallSize: config.smallSize || 0, // Normal size (0)
+      lineWidth: config.lineWidth || 384, // Default printer width in pixels
+      deviceScaleFactor: config.deviceScaleFactor || 1,
+      fontSize: config.fontSize || 24,
       ...config,
     };
   }
@@ -31,151 +28,748 @@ class PrintFormatter {
   }
 
   /**
-   * Center text within the line width
-   * @param {string} text - Text to center
-   * @returns {string} Centered text
+   * Main entry point for printing content as image
+   * @param {Object} content - Content to print (KOT or Bill object)
+   * @param {String} type - "kot" or "bill"
+   * @param {Object} options - Additional options like printer configuration
+   * @returns {Promise<string>} ESC/POS commands for printing
    */
-  center(text) {
-    if (text.length >= this.config.charsPerLine) {
-      return text.substring(0, this.config.charsPerLine);
-    }
-
-    const padding = Math.floor((this.config.charsPerLine - text.length) / 2);
-    const leftPadding = " ".repeat(Math.max(0, padding));
-    const rightPadding = " ".repeat(
-      Math.max(0, this.config.charsPerLine - text.length - padding)
-    );
-
-    return leftPadding + text + rightPadding;
-  }
-
-  /**
-   * Create a divider line
-   * @returns {string} Divider line
-   */
-  divider() {
-    return "-".repeat(this.config.charsPerLine);
-  }
-
-  /**
-   * Format key-value pair
-   * @param {string} key - Key
-   * @param {string} value - Value
-   * @returns {string} Formatted key-value pair
-   */
-  keyValue(key, value) {
-    const maxKeyLength = Math.floor(this.config.charsPerLine * 0.4);
-    const truncatedKey = key.slice(0, maxKeyLength);
-    const padding =
-      this.config.charsPerLine - truncatedKey.length - value.length;
-    return `${truncatedKey}${" ".repeat(Math.max(0, padding))}${value}`;
-  }
-
-  /**
-   * Format a bill item
-   * @param {string} name - Item name
-   * @param {number} quantity - Quantity
-   * @param {number} price - Price
-   * @returns {string} Formatted bill item
-   */
-  billItem(name, quantity, price) {
-    const maxNameLength = this.config.charsPerLine - 20; // Reserve space for qty and price
-    const truncatedName = name.slice(0, maxNameLength);
-    const qtyStr = `x${quantity}`;
-    const priceStr = `Rs.${price.toFixed(2)}`;
-    const padding =
-      this.config.charsPerLine -
-      truncatedName.length -
-      qtyStr.length -
-      priceStr.length;
-    return `${truncatedName}${" ".repeat(
-      Math.max(0, padding)
-    )}${qtyStr} ${priceStr}`;
-  }
-
-  /**
-   * Format a KOT item
-   * @param {string} name - Item name
-   * @param {number} quantity - Quantity
-   * @returns {string} Formatted KOT item
-   */
-  kotItem(name, quantity) {
-    const maxNameLength = this.config.charsPerLine - 6; // Reserve space for quantity
-    const truncatedName = name.slice(0, maxNameLength);
-    const qtyStr = `x${quantity}`;
-    const padding =
-      this.config.charsPerLine - truncatedName.length - qtyStr.length;
-    return `${truncatedName}${" ".repeat(Math.max(0, padding))}${qtyStr}`;
-  }
-
-  /**
-   * Wrap text to fit within the line width
-   * @param {string} text - Text to wrap
-   * @returns {string} Wrapped text
-   */
-  wrapText(text) {
-    const words = text.split(" ");
-    const lines = [];
-    let currentLine = "";
-
-    words.forEach((word) => {
-      if (currentLine.length + word.length + 1 <= this.config.charsPerLine) {
-        currentLine += (currentLine.length === 0 ? "" : " ") + word;
-      } else {
-        lines.push(currentLine);
-        currentLine = word;
+  async printContentAsImage(content, type, options = {}) {
+    try {
+      // Set any printer-specific options
+      if (options.printerConfig) {
+        this.updateConfig(options.printerConfig);
       }
-    });
 
-    if (currentLine.length > 0) {
-      lines.push(currentLine);
+      // Mark the content to indicate it was printed as an image
+      content._printMethod = "html-image";
+
+      // 1. Generate HTML from content
+      const htmlContent = this.formatToHTML(content, type);
+
+      // 2. Convert HTML to image and format for printer
+      const printCommands = await this.printAsImage(htmlContent);
+
+      // 3. Return the ESC/POS commands
+      return printCommands;
+    } catch (error) {
+      console.error(`Error printing ${type} as image:`, error);
+      throw new Error(`Failed to print ${type}: ${error.message}`);
     }
-
-    return lines.join("\n");
   }
 
   /**
-   * Format a KOT table
-   * @param {Array} items - Array of items
-   * @returns {Array} Array of formatted lines
+   * Print HTML content as image using ESC/POS
+   * @param {string} htmlContent - HTML content to print
+   * @returns {Promise<string>} ESC/POS commands for printing the image
    */
-  formatKOTTable(items) {
-    const ratios = [8, 2, 4]; // Adjusted ratios for better spacing: Item, Qty, Status
-    const header = ["Item", "Qty", "Status"];
-    const rows = [];
+  async printAsImage(htmlContent) {
+    // ESC/POS commands
+    const ESC = "\x1B";
+    const GS = "\x1D";
+    const INIT = `${ESC}@`; // Initialize printer
 
-    // Add header with proper spacing
-    const headerRow = this.tableRow(header, ratios)[0];
-    rows.push(headerRow);
-    rows.push(this.divider());
+    // Cut commands - try different standard ones for maximum compatibility
+    const CUT_PARTIAL = `${GS}V\x01`; // Partial cut (most common partial cut command)
+    const CUT_FULL = `${GS}V\x00`; // Full cut (most common full cut command)
+    const CUT_PARTIAL_FEED = `${GS}V\x41\x03`; // Partial cut with 3-dot feed
+    const CUT_FULL_FEED = `${GS}V\x42\x03`; // Full cut with 3-dot feed
 
-    // Add items with proper spacing
-    items.forEach((item) => {
-      // Get status indicator if available
-      let statusDisplay = "";
-      if (item.status) {
-        const statusIndicator = this.getStatusIndicator(item.status);
-        if (statusIndicator) {
-          statusDisplay = `[${statusIndicator}]`;
+    const BEEP = `${ESC}B\x02\x01`; // Beep sound (2 beeps, 1 duration)
+    const FEED_AND_CUT = `${ESC}d\x03${CUT_FULL_FEED}`; // Feed 8 lines and cut
+
+    try {
+      console.log("Converting HTML to image...");
+
+      // Try to convert HTML to image
+      let imageResult;
+      try {
+        imageResult = await this.convertHTMLToImageNode(htmlContent);
+        console.log("Image conversion successful, formatting for printer...");
+      } catch (conversionError) {
+        console.error("HTML to image conversion failed:", conversionError);
+        throw conversionError;
+      }
+
+      // Format the image data for ESC/POS
+      const printCommands = this.formatImageForPrinter(imageResult);
+
+      console.log("Formatting complete, preparing final output...");
+
+      // Create the complete print command sequence
+      let output = INIT;
+      output += printCommands;
+      output += BEEP;
+
+      // Add extra space before cutting - many lines to ensure enough paper is fed
+      output += "\n"; // 12 line feeds for extra space
+
+      // Add the cut command sequence - try multiple approaches for compatibility
+      output += FEED_AND_CUT; // This is the most reliable cutting sequence
+
+      return output;
+    } catch (error) {
+      console.error("Error converting HTML to image:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Convert HTML to image in Node.js environment
+   * @param {string} htmlContent - HTML content
+   * @returns {Promise<Object>} Image data and dimensions
+   */
+  async convertHTMLToImageNode(htmlContent) {
+    const puppeteer = require("puppeteer");
+    const fs = require("fs");
+    const path = require("path");
+    const { createCanvas, loadImage } = require("canvas");
+
+    let browser = null;
+    let tempImagePath = null;
+
+    try {
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+
+      const page = await browser.newPage();
+      await page.setContent(htmlContent);
+      await page.setViewport({
+        width: this.config.lineWidth,
+        height: 800,
+        deviceScaleFactor: this.config.deviceScaleFactor,
+      });
+
+      const bodyHeight = await page.evaluate(() => {
+        return document.body.scrollHeight;
+      });
+
+      await page.setViewport({
+        width: this.config.lineWidth,
+        height: bodyHeight,
+        deviceScaleFactor: this.config.deviceScaleFactor,
+      });
+
+      const imageBuffer = await page.screenshot({
+        type: "png",
+        fullPage: true,
+      });
+      console.log(`Screenshot captured: ${imageBuffer.length} bytes`);
+
+      // Create a temporary file to save the image
+      // This works around the "Image given has not completed loading" issue
+      tempImagePath = path.join(
+        process.cwd(),
+        `temp-print-image-${Date.now()}.png`
+      );
+
+      fs.writeFileSync(tempImagePath, imageBuffer);
+      console.log(`Saved temporary image to: ${tempImagePath}`);
+
+      // Load the image from the saved file
+      const image = await loadImage(tempImagePath);
+      console.log(`Image loaded successfully: ${image.width}x${image.height}`);
+
+      // Create canvas with the image dimensions
+      const canvasInstance = createCanvas(image.width, image.height);
+      const ctx = canvasInstance.getContext("2d");
+
+      // Draw the image
+      ctx.drawImage(image, 0, 0);
+
+      // Get image data
+      const imageData = ctx.getImageData(0, 0, image.width, image.height);
+      const pixels = imageData.data;
+
+      // Convert to monochrome
+      const width = image.width;
+      const height = image.height;
+      const widthBytes = Math.ceil(width / 8);
+      const monochromeData = new Uint8Array(widthBytes * height);
+
+      // Process each pixel
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const r = pixels[idx];
+          const g = pixels[idx + 1];
+          const b = pixels[idx + 2];
+
+          // Grayscale conversion
+          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+
+          // Threshold to black or white
+          const bit = gray < 128 ? 1 : 0;
+
+          // Set bit in monochrome data
+          const byteIdx = y * widthBytes + Math.floor(x / 8);
+          const bitPos = 7 - (x % 8); // MSB first
+          if (bit) {
+            monochromeData[byteIdx] |= 1 << bitPos;
+          }
         }
       }
 
-      const itemRows = this.tableRow(
-        [
-          item.name,
-          (item.quantity?.toString() || "0").padStart(2, " "), // Right align numbers
-          statusDisplay,
-        ],
-        ratios
-      );
-      rows.push(...itemRows);
-    });
+      return {
+        imageData: imageBuffer,
+        width: width,
+        height: height,
+        monochromeData: monochromeData,
+      };
+    } catch (error) {
+      console.error("Error rendering HTML to image:", error);
+      throw error;
+    } finally {
+      // Clean up resources
+      if (browser) {
+        await browser.close();
+      }
 
-    return rows;
+      // Delete the temporary image file
+      if (tempImagePath && fs.existsSync(tempImagePath)) {
+        try {
+          fs.unlinkSync(tempImagePath);
+          console.log(`Deleted temporary image: ${tempImagePath}`);
+        } catch (e) {
+          console.error(`Failed to delete temporary image: ${e.message}`);
+        }
+      }
+    }
   }
 
   /**
-   * Get status indicator
+   * Format image data for ESC/POS printer
+   * @param {Object} imageData - Image data object from convertHTMLToImage
+   * @returns {string} ESC/POS image commands
+   */
+  formatImageForPrinter(imageResult) {
+    // This is a simplified example for raster bitmap printing
+    // ESC/POS has several image printing modes; this uses GS v 0
+    const GS = "\x1D";
+
+    // Validate that we have the required data
+    if (
+      !imageResult ||
+      !imageResult.width ||
+      !imageResult.height ||
+      !imageResult.monochromeData
+    ) {
+      throw new Error("Invalid image data: missing required properties");
+    }
+
+    const { width, height, monochromeData } = imageResult;
+
+    // Calculate width in bytes (each byte contains 8 horizontal pixels)
+    const widthBytes = Math.ceil(width / 8);
+
+    // Width bytes in little-endian format
+    const xL = widthBytes & 0xff;
+    const xH = (widthBytes >> 8) & 0xff;
+
+    // Height in little-endian format
+    const yL = height & 0xff;
+    const yH = (height >> 8) & 0xff;
+
+    // Create command
+    let cmd = `${GS}v0\x00${String.fromCharCode(xL)}${String.fromCharCode(
+      xH
+    )}${String.fromCharCode(yL)}${String.fromCharCode(yH)}`;
+
+    // Append image data
+    for (let i = 0; i < monochromeData.length; i++) {
+      cmd += String.fromCharCode(monochromeData[i]);
+    }
+
+    return cmd;
+  }
+
+  /**
+   * Check if browser or Node environment
+   * @private
+   */
+  isNodeEnvironment() {
+    return typeof window === "undefined";
+  }
+
+  /**
+   * Convert formatted content to HTML
+   * @param {Object} content - Content object (KOT or Bill)
+   * @param {String} type - "kot" or "bill"
+   * @returns {string} HTML representation
+   */
+  formatToHTML(content, type) {
+    if (type.toLowerCase() === "kot") {
+      return this.formatKOTToHTML(content);
+    } else if (type.toLowerCase() === "bill") {
+      return this.formatBillToHTML(content);
+    }
+    throw new Error(`Unsupported format type: ${type}`);
+  }
+
+  /**
+   * Format KOT content as HTML
+   * @param {Object} content - KOT content
+   * @returns {string} HTML representation of KOT
+   */
+  formatKOTToHTML(content) {
+    const { header, items, footer, note, orderedBy } = content;
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body {
+            font-family: Arial, 'Helvetica Neue', sans-serif;
+            width: ${this.config.lineWidth}px;
+            margin: 0;
+            padding: 0;
+            font-size: 30px;
+          }
+          .center { text-align: center; }
+          .left { text-align: left; }
+          .right { text-align: right; }
+          .bold { font-weight: bold; }
+          .large { 
+            font-size: 32px;
+          }
+          .medium { 
+            font-size: 30px;
+          }
+          .small {
+            font-size: 24px;
+          }
+          .divider {
+            border-bottom: 3px dashed #000000;
+            width: 100%;
+            margin: 10px 0;
+          }
+          .key-value-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+          }
+          .key-value-left {
+            display: flex;
+            justify-content: flex-start;
+            margin: 8px 0;
+            flex: 1;
+          }
+          .key-value-right {
+            display: flex;
+            justify-content: flex-end;
+            margin: 8px 0;
+            flex: 1;
+            text-align: right;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          th, td {
+            padding: 8px 4px;
+            text-align: left;
+            vertical-align: top;
+          }
+          td.item {
+            text-transform: uppercase;
+            padding-right: 15px;
+            width: 80%;
+            font-weight: bold;
+          }
+          th.status, td.status {
+            text-align: right;
+            width: 20%;
+          }
+          .print-method {
+            color: transparent;
+            font-size: 1px;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+          }
+          .instructions {
+            font-style: italic;
+            margin-top: 10px;
+          }
+          .order-type {
+            font-size: 30px;
+            font-weight: bold;
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Hidden marker to identify this was printed using HTML method -->
+        <div class="print-method">HTML-IMAGE-PRINT</div>
+
+        <div class="center">(${header.kotType})</div>
+        <div class="center bold">Order No: #${
+          header.kotNumber || "2403250001"
+        }</div>
+        
+        <div class="divider"></div>
+        
+        <div class="key-value-row small">
+          <div style="flex: 1;">
+            <span>To: ${header.customerName}</span>
+          </div>
+          <div style="flex: 1; text-align: right;">
+            <span class="order-type">Table / Mode: ${header.orderType}</span>
+          </div>
+        </div>
+        
+        <div class="key-value-row small">
+          <div style="flex: 1;">
+            <span>Date: ${
+              header.date ? header.date.split(" ")[0] : "24/03/2025"
+            }</span>
+          </div>
+          <div style="flex: 1; text-align: right;">
+            <span>Time: ${
+              header.date ? header.date.split(" ")[1] : "10:00 AM"
+            }</span>
+          </div>
+        </div>
+        
+        <div class="divider"></div>
+        
+        <table>
+          <tr>
+            <th>Qty x Item</th>
+            <th class="status">Status</th>
+          </tr>
+        </table>
+        
+        <div class="divider"></div>
+        
+        <table>
+          ${items
+            .map((item) => {
+              const statusIndicator = this.getStatusIndicator(
+                item.status || ""
+              );
+              const statusDisplay = statusIndicator
+                ? `[${statusIndicator}]`
+                : "";
+
+              return `
+              <tr>
+                <td class="item">${
+                  item.quantity || 0
+                } <span style="font-size: 16px;">x</span> ${item.name}</td>
+                <td class="status">${statusDisplay}</td>
+              </tr>
+            `;
+            })
+            .join("")}
+        </table>
+        
+        <div class="divider"></div>
+        
+        <div class="key-value-row">
+          <div class="key-value-left">
+            <span>Ordered By:</span>
+          </div>
+          <div class="key-value-right">
+            <span>${orderedBy || header.waiterName || ""}</span>
+          </div>
+        </div>
+        
+        <div class="divider"></div>
+        
+        ${
+          note &&
+          `
+          <div class="instructions">
+            <span>Instructions: ${note}</span>
+          </div>
+        `
+        }
+        
+        <!-- Add extra space at the bottom for cutting -->
+        <div style="height: 30px;"></div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Format Bill content as HTML
+   * @param {Object} content - Bill content
+   * @returns {string} HTML representation of Bill
+   */
+  formatBillToHTML(content) {
+    const { header, items, summary } = content;
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body {
+            font-family: Arial, 'Helvetica Neue', sans-serif;
+            width: ${this.config.lineWidth}px;
+            margin: 0;
+            padding: 0;
+            font-size: 28px;
+          }
+          .center { text-align: center; }
+          .left { text-align: left; }
+          .right { text-align: right; }
+          .bold { font-weight: bold; }
+          .large { 
+            font-size: 30px;
+            font-weight: bold;
+          }
+          .medium { 
+            font-size: 28px;
+            font-weight: bold;
+          }
+          .small {
+            font-size: 22px;
+          }
+          .divider {
+            border-bottom: 3px dashed #000000;
+            width: 100%;
+            margin: 10px 0;
+          }
+          .key-value-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+          }
+          .key-value-full {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+          }
+          th, td {
+            padding: 6px 4px;
+            text-align: left;
+            vertical-align: top;
+          }
+          th {
+            font-weight: normal;
+          }
+          th.item-name, td.item-name {
+            width: 50%;
+            text-align: left;
+            word-wrap: break-word;
+            text-transform: uppercase;
+          }
+          th.price, td.price {
+            width: 18%;
+            text-align: right;
+          }
+          th.qty, td.qty {
+            width: 12%;
+            text-align: right;
+          }
+          th.total, td.total {
+            width: 20%;
+            text-align: right;
+          }
+          .thank-you {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 28px;
+            font-weight: bold;
+          }
+          .print-method {
+            color: transparent;
+            font-size: 1px;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+          }
+          .gst-box {
+            margin: 10px auto;
+            border: 1px solid #000;
+            width: 95%;
+            text-align: center;
+            padding: 5px;
+          }
+          .gst-title {
+            text-align: center;
+            padding: 3px 0;
+            border-bottom: 1px dashed #000;
+          }
+          .gst-values {
+            text-align: center;
+            padding: 3px 0;
+          }
+          .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+          }
+          .summary-label {
+            text-align: left;
+          }
+          .summary-value {
+            text-align: right;
+          }
+          .total-row {
+            font-weight: bold;
+            font-size: 28px;
+          }
+        </style>
+      </head>
+      <body>
+        <!-- Hidden marker to identify this was printed using HTML method -->
+        <div class="print-method">HTML-IMAGE-PRINT</div>
+
+        <div class="center large">${header.restaurantName.toUpperCase()}</div>
+        ${
+          header.description
+            ? `<div class="center">(${header.description})</div>`
+            : ""
+        }
+        ${header.address ? `<div class="center">${header.address}</div>` : ""}
+        ${header.phoneNo ? `<div class="center">${header.phoneNo}</div>` : ""}
+         ${
+           header.email ? `<div class="center small">${header.email}</div>` : ""
+         }
+        ${
+          header.gstin ? `<div class="center">GSTIN: ${header.gstin}</div>` : ""
+        }
+
+        
+        <div class="divider"></div>
+        
+        <div class="center medium">INVOICE: ${header.invoice || "#3/2025"}</div>
+        
+        <div class="divider"></div>
+        
+        <div class="key-value-row">
+          <div style="flex: 1;">
+            <span>To: ${header.customerName}</span>
+          </div>
+          <div style="flex: 1; text-align: right;">
+            <span class="bold">Table / Mode: ${header.orderType}</span>
+          </div>
+        </div>
+        
+        <div class="key-value-row">
+          <div style="flex: 1;">
+            <span>Date: ${
+              header.date ? header.date.split(" ")[0] : "24/03/2025"
+            }</span>
+          </div>
+          <div style="flex: 1; text-align: right;">
+            <span>Time: ${
+              header.date ? header.date.split(" ")[1] : "10:00 AM"
+            }</span>
+          </div>
+        </div>
+        
+        <div class="divider"></div>
+        
+        <table>
+          <thead>
+            <tr>
+              <th class="item-name">Item</th>
+              <th class="price">Price (Rs)</th>
+              <th class="qty">Qty</th>
+              <th class="total">Total (Rs)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="4"><div class="divider" style="margin: 4px 0;"></div></td></tr>
+            ${items
+              .map((item) => {
+                // Ensure price and quantity are numbers
+                const price = Number(item.price || 0);
+                const quantity = Number(item.quantity || 0);
+                const total = price * quantity;
+
+                return `
+                <tr>
+                  <td class="item-name">${item.name}</td>
+                  <td class="price">${price.toFixed(2)}</td>
+                  <td class="qty">${quantity}</td>
+                  <td class="total">${total.toFixed(2)}</td>
+                </tr>
+              `;
+              })
+              .join("")}
+          </tbody>
+        </table>
+        
+        <div class="divider"></div>
+        
+        <div class="key-value-full">
+          <div class="summary-label">Subtotal:</div>
+          <div class="summary-value">Rs. ${Number(
+            summary.subTotal || 0
+          ).toFixed(2)}</div>
+        </div>
+        
+        <div class="divider"></div>
+        
+        <div class="key-value-full">
+          <div class="summary-label">Discount (${summary.discount || 0}%)</div>
+          <div class="summary-value">-Rs. ${Number(
+            summary.discountAmount || 0
+          ).toFixed(2)}</div>
+        </div>
+        
+        <div class="key-value-full">
+          <div class="summary-label">GST (18%)</div>
+          <div class="summary-value">+Rs. ${(
+            Number(summary.sgst || 0) + Number(summary.cgst || 0)
+          ).toFixed(2)}</div>
+        </div>
+        
+        <div class="gst-box">
+          <div class="gst-title">SGST(9%)+CGST(9%)=GST(18%)</div>
+          <div class="gst-values">Rs.${Number(summary.sgst || 0).toFixed(
+            2
+          )} + Rs.${Number(summary.cgst || 0).toFixed(2)} = Rs.${(
+      Number(summary.sgst || 0) + Number(summary.cgst || 0)
+    ).toFixed(2)}</div>
+        </div>
+        
+        <div class="key-value-full">
+          <div class="summary-label">Round Off</div>
+          <div class="summary-value">-Rs. ${Number(
+            summary.rounded || 0
+          ).toFixed(2)}</div>
+        </div>
+        
+        <div class="divider"></div>
+        
+        <div class="key-value-full total-row">
+          <div class="summary-label">Total Payable</div>
+          <div class="summary-value">Rs. ${Number(summary.total || 0).toFixed(
+            2
+          )}</div>
+        </div>
+        
+        <div class="divider"></div>
+        
+        <div class="thank-you">Thank you & Visit us again!</div>
+        
+       
+        
+        <!-- Add extra space at the bottom for cutting -->
+        <div style="height: 30px;"></div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Get status indicator for KOT items
    * @private
    */
   getStatusIndicator(status) {
@@ -192,646 +786,6 @@ class PrintFormatter {
       default:
         return "";
     }
-  }
-
-  /**
-   * Format a bill table
-   * @param {Array} items - Array of items
-   * @returns {Array} Array of formatted lines
-   */
-  formatBillTable(items) {
-    const ratios = [6, 5, 2, 10]; // Adjusted ratios for better spacing: Item, Price, Qty, Total
-    const header = ["Item", "Price", "Qty", "Total"];
-    const rows = [];
-
-    // Add header with proper spacing
-    const headerRow = this.tableRow(header, ratios)[0];
-    rows.push(headerRow);
-    rows.push(this.divider());
-
-    // Add items with proper spacing
-    items.forEach((item) => {
-      const total = (item.price || 0) * (item.quantity || 0);
-      const itemRows = this.tableRow(
-        [
-          item.name,
-          `Rs.${item.price || 0}`,
-          (item.quantity?.toString() || "0").padStart(2, " "), // Right align numbers
-          `Rs.${total.toFixed(2)}`,
-        ],
-        ratios
-      );
-      rows.push(...itemRows);
-    });
-
-    return rows;
-  }
-
-  /**
-   * Format a table row
-   * @private
-   */
-  tableRow(columns, ratios) {
-    const totalWidth = this.config.charsPerLine;
-    const columnWidths = this.calculateColumnWidths(totalWidth, ratios);
-
-    // Process each column
-    const processedColumns = columns.map((col, index) => {
-      const width = columnWidths[index];
-      return this.wrapColumnText(col, width);
-    });
-
-    // Combine into rows
-    const maxRows = Math.max(...processedColumns.map((col) => col.length));
-    const rows = [];
-
-    for (let rowIndex = 0; rowIndex < maxRows; rowIndex++) {
-      let row = "";
-      processedColumns.forEach((col, colIndex) => {
-        const cell = col[rowIndex] || "";
-        const width = columnWidths[colIndex];
-        const padding = width - cell.length;
-        // Add extra space between columns
-        const columnSpacing =
-          colIndex < processedColumns.length - 1 ? "  " : "";
-
-        // For wrapped lines (not first line), add proper column padding
-        if (rowIndex > 0 && colIndex > 0) {
-          // Calculate the total width of previous columns including spacing
-          const previousColumnsWidth =
-            columnWidths.slice(0, colIndex).reduce((sum, w) => sum + w, 0) +
-            colIndex * 2; // Add spacing between columns
-          row += " ".repeat(previousColumnsWidth);
-        }
-
-        row += cell + " ".repeat(Math.max(0, padding)) + columnSpacing;
-      });
-      rows.push(row.trimEnd());
-    }
-
-    return rows;
-  }
-
-  /**
-   * Wrap text for a specific column width
-   * @private
-   */
-  wrapColumnText(text, width) {
-    if (!text) return [""];
-
-    const words = text.split(" ");
-    const lines = [];
-    let currentLine = "";
-
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-      const nextWord = words[i + 1];
-
-      // If adding this word would exceed the width
-      if (currentLine.length + word.length + 1 > width) {
-        // If we have a current line, add it
-        if (currentLine.length > 0) {
-          lines.push(currentLine.trim());
-        }
-
-        // If the word itself is longer than the width, split it
-        if (word.length > width) {
-          let remainingWord = word;
-          while (remainingWord.length > 0) {
-            lines.push(remainingWord.substring(0, width));
-            remainingWord = remainingWord.substring(width);
-          }
-        } else {
-          currentLine = word;
-        }
-      } else {
-        // Add word to current line
-        currentLine += (currentLine.length === 0 ? "" : " ") + word;
-
-        // If this is the last word or next word would exceed width, add current line
-        if (
-          i === words.length - 1 ||
-          (nextWord && currentLine.length + nextWord.length + 1 > width)
-        ) {
-          lines.push(currentLine.trim());
-          currentLine = "";
-        }
-      }
-    }
-
-    // Add any remaining text
-    if (currentLine.length > 0) {
-      lines.push(currentLine.trim());
-    }
-
-    return lines;
-  }
-
-  /**
-   * Calculate column widths based on printer width
-   * @private
-   */
-  calculateColumnWidths(totalWidth, columns) {
-    const totalRatio = columns.reduce((a, b) => a + b, 0);
-    return columns.map((ratio) =>
-      Math.floor((ratio / totalRatio) * totalWidth)
-    );
-  }
-
-  /**
-   * Format a KOT content
-   * @param {Object} content - KOT content
-   * @returns {string} Formatted KOT content
-   */
-  formatKOTContent(content) {
-    const { header, items, footer, note, orderedBy } = content;
-    let output = "";
-
-    // ESC/POS commands for text alignment and formatting
-    const ESC = "\x1B";
-    const CENTER = `${ESC}a\x01`;
-    const LEFT = `${ESC}a\x00`;
-    const BOLD_ON = `${ESC}E\x01`;
-    const BOLD_OFF = `${ESC}E\x00`;
-    const INIT = `${ESC}@`; // Initialize printer
-    const CUT = `${ESC}d\x03`; // Cut paper with 3-line feed
-    const BEEP = `${ESC}B\x02\x01`; // Beep sound (2 beeps, 1 duration)
-
-    // Font size commands - using fixed hex values
-    const NORMAL_SIZE = `${ESC}!\x00`; // Normal size
-    const LARGE_SIZE = `${ESC}!\x18`; // Double height and width (24 = 0x18)
-    const MEDIUM_SIZE = `${ESC}!\x10`; // Double height (16 = 0x10)
-    const SMALL_SIZE = `${ESC}!\x00`; // Small size (0 = 0x00)
-
-    // Initialize printer
-    output += INIT;
-    output += "\n"; // Extra spacing at the top
-
-    // Center KOT ORDER with bold and large size
-    // output +=
-    //   CENTER +
-    //   BOLD_ON +
-    //   LARGE_SIZE +
-    //   "KOT ORDER" +
-    //   NORMAL_SIZE +
-    //   BOLD_OFF +
-    //   "\n";
-
-    // KOT Type
-    output +=
-      CENTER +
-      BOLD_ON +
-      MEDIUM_SIZE +
-      `(${header.kotType})` +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-
-    // Restaurant name
-    output +=
-      CENTER +
-      BOLD_ON +
-      MEDIUM_SIZE +
-      header.restaurantName.toUpperCase() +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n\n";
-
-    // Divider
-    output += LEFT + this.divider() + "\n";
-
-    // KOT details with extra spacing
-    output +=
-      LEFT +
-      BOLD_ON +
-      MEDIUM_SIZE +
-      this.keyValue("KOT No:", header.kotNumber || "N/A") +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-    output +=
-      LEFT +
-      BOLD_ON +
-      NORMAL_SIZE +
-      this.keyValue("To:", header.customerName) +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-    output +=
-      LEFT +
-      BOLD_ON +
-      MEDIUM_SIZE +
-      this.keyValue("Type:", header.orderType) +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-    output +=
-      LEFT +
-      BOLD_ON +
-      NORMAL_SIZE +
-      this.keyValue("Date:", header.date) +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-
-    // Divider
-    output += LEFT + this.divider() + "\n";
-
-    // Add table header with bold and medium size
-    output +=
-      LEFT +
-      BOLD_ON +
-      "Item                                Qty Status" +
-      BOLD_OFF +
-      "\n";
-    output += LEFT + this.divider() + "\n";
-
-    // Add items with proper spacing and capitalization
-    if (items && items.length > 0) {
-      items.forEach((item) => {
-        // Get status indicator if available
-        let statusDisplay = "";
-        if (item.status) {
-          const statusIndicator = this.getStatusIndicator(item.status);
-          if (statusIndicator) {
-            statusDisplay = `[${statusIndicator}]`;
-          }
-        }
-
-        // Calculate available width for item name based on printer width
-        const nameWidth = Math.max(10, this.config.charsPerLine - 12); // Reserve space for qty and status
-
-        // Format the item name with proper wrapping if needed
-        // Convert item name to uppercase for better visibility
-        const name = item.name.trim().toUpperCase();
-
-        if (name.length <= nameWidth) {
-          // Simple case: name fits on one line
-          const paddedName = name.padEnd(nameWidth, " ");
-          const qty = (item.quantity?.toString() || "0").padStart(3, " ");
-          const status = statusDisplay.padStart(6, " ");
-
-          output +=
-            LEFT +
-            MEDIUM_SIZE + // Use medium size for item names
-            paddedName +
-            BOLD_ON +
-            qty +
-            BOLD_OFF +
-            status +
-            NORMAL_SIZE +
-            "\n";
-        } else {
-          // Complex case: name needs to be wrapped
-          const firstLine = name.substring(0, nameWidth);
-          const remainingText = name.substring(nameWidth);
-
-          // First line with quantity and status
-          const qty = (item.quantity?.toString() || "0").padStart(3, " ");
-          const status = statusDisplay.padStart(6, " ");
-
-          output +=
-            LEFT +
-            MEDIUM_SIZE + // Use medium size for item names
-            firstLine +
-            BOLD_ON +
-            qty +
-            BOLD_OFF +
-            status +
-            NORMAL_SIZE +
-            "\n";
-
-          // Additional lines for the wrapped text, if any
-          if (remainingText) {
-            // Split remaining text into chunks of nameWidth
-            for (let i = 0; i < remainingText.length; i += nameWidth) {
-              const chunk = remainingText.substring(i, i + nameWidth);
-              output +=
-                LEFT +
-                MEDIUM_SIZE + // Use medium size for item names
-                chunk.padEnd(nameWidth, " ") +
-                "      " +
-                NORMAL_SIZE +
-                "\n"; // Add spacing where qty and status would be
-            }
-          }
-        }
-
-        // Add extra spacing between items
-        output += "\n";
-      });
-    }
-
-    // Footer
-    output += LEFT + this.divider() + "\n";
-
-    if (footer?.totalItems) {
-      output +=
-        LEFT +
-        BOLD_ON +
-        NORMAL_SIZE +
-        this.keyValue("Total Items:", footer.totalItems.toString()) +
-        NORMAL_SIZE +
-        BOLD_OFF +
-        "\n";
-    }
-
-    // Divider for ordered by section
-    output += LEFT + this.divider() + "\n";
-
-    // Ordered By section
-    if (orderedBy) {
-      output +=
-        LEFT +
-        BOLD_ON +
-        this.keyValue("Ordered By:", orderedBy) +
-        BOLD_OFF +
-        "\n\n";
-    } else if (header.waiterName) {
-      output +=
-        LEFT +
-        BOLD_ON +
-        this.keyValue("Ordered By:", header.waiterName) +
-        BOLD_OFF +
-        "\n\n";
-    }
-
-    if (note) {
-      output +=
-        LEFT +
-        BOLD_ON +
-        NORMAL_SIZE +
-        this.keyValue("Cheff Note:", note) +
-        NORMAL_SIZE +
-        BOLD_OFF +
-        "\n\n";
-    }
-
-    // Thank you
-    // output += "\n";
-    // output += CENTER + MEDIUM_SIZE + "Thank you!" + NORMAL_SIZE + "\n";
-    // output += "\n\n";
-
-    // Add beep sound
-    output += BEEP;
-
-    // Cut paper
-    // output += CUT;
-
-    return output;
-  }
-
-  /**
-   * Format a bill content
-   * @param {Object} content - Bill content
-   * @returns {string} Formatted bill content
-   */
-  formatBillContent(content) {
-    const { header, items, summary } = content;
-    let output = "";
-
-    // ESC/POS commands for text alignment and formatting
-    const ESC = "\x1B";
-    const CENTER = `${ESC}a\x01`;
-    const LEFT = `${ESC}a\x00`;
-    const BOLD_ON = `${ESC}E\x01`;
-    const BOLD_OFF = `${ESC}E\x00`;
-    const INIT = `${ESC}@`; // Initialize printer
-    const BEEP = `${ESC}B\x02\x01`; // Beep sound (2 beeps, 1 duration)
-
-    // Font size commands - using fixed hex values
-    const NORMAL_SIZE = `${ESC}!\x00`; // Normal size
-    const LARGE_SIZE = `${ESC}!\x18`; // Double height and width (24 = 0x18)
-    const MEDIUM_SIZE = `${ESC}!\x10`; // Double height (16 = 0x10)
-    const SMALL_SIZE = `${ESC}!\x00`; // Small size (0 = 0x00)
-
-    // Initialize
-    output += INIT;
-    output += "\n\n"; // Extra spacing at the top
-
-    // Bill header
-    output +=
-      CENTER +
-      BOLD_ON +
-      NORMAL_SIZE +
-      `BILL: ${header.invoice || ""}` +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-    output +=
-      CENTER +
-      BOLD_ON +
-      LARGE_SIZE +
-      header.restaurantName.toUpperCase() +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-
-    if (header.description) {
-      output += CENTER + header.description + "\n";
-    }
-
-    if (header.address) {
-      output += CENTER + header.address + "\n";
-    }
-
-    if (header.gstin) {
-      output += CENTER + `GSTIN: ${header.gstin}` + "\n";
-    }
-
-    if (header.phoneNo) {
-      output += CENTER + `${header.phoneNo}` + "\n";
-    }
-
-    if (header.email) {
-      output += CENTER + `${header.email}` + "\n\n";
-    }
-
-    // Divider
-    output += this.divider() + "\n";
-
-    // Bill details with extra spacing
-    output +=
-      BOLD_ON +
-      this.keyValue("Customer", header.customerName) +
-      BOLD_OFF +
-      "\n";
-    output += this.keyValue("Type", header.orderType) + "\n";
-    output += this.keyValue("Date", header.date) + "\n";
-
-    // Divider
-    output += this.divider() + "\n";
-
-    // Add table header with bold and medium size
-    output +=
-      LEFT +
-      BOLD_ON +
-      "Item                         Price  Qty  Total" +
-      BOLD_OFF +
-      "\n";
-
-    output += this.divider() + "\n";
-
-    // Add items with proper formatting and extra spacing
-    if (items && items.length > 0) {
-      items.forEach((item) => {
-        const total = (item.price || 0) * (item.quantity || 0);
-
-        // Calculate available width for item name
-        const nameWidth = Math.max(10, this.config.charsPerLine - 22); // Reserve space for price, qty, total
-
-        // Format the item name with proper wrapping if needed
-        // Convert item name to uppercase for better visibility
-        const name = item.name.trim();
-
-        if (name.length <= nameWidth) {
-          // Simple case: name fits on one line
-          const paddedName = name.padEnd(nameWidth, " ");
-          const price = `${item.price || 0}`.padStart(8, " ");
-          const qty = (item.quantity?.toString() || "0").padStart(3, " ");
-          const totalStr = `${total.toFixed(2)}`.padStart(10, " ");
-
-          output +=
-            LEFT +
-            NORMAL_SIZE + // Use medium size for item names
-            paddedName +
-            price +
-            BOLD_ON +
-            qty +
-            BOLD_OFF +
-            totalStr +
-            NORMAL_SIZE +
-            "\n";
-        } else {
-          // Complex case: name needs to be wrapped
-          const firstLine = name.substring(0, nameWidth);
-          const remainingText = name.substring(nameWidth);
-
-          const price = `Rs.${item.price || 0}`.padStart(8, " ");
-          const qty = (item.quantity?.toString() || "0").padStart(3, " ");
-          const totalStr = `Rs.${total.toFixed(2)}`.padStart(10, " ");
-
-          output +=
-            LEFT +
-            NORMAL_SIZE + // Use medium size for item names
-            firstLine +
-            price +
-            BOLD_ON +
-            qty +
-            BOLD_OFF +
-            totalStr +
-            NORMAL_SIZE +
-            "\n";
-
-          // Additional lines for the wrapped text, if any
-          if (remainingText) {
-            // Split remaining text into chunks of nameWidth
-            for (let i = 0; i < remainingText.length; i += nameWidth) {
-              const chunk = remainingText.substring(i, i + nameWidth);
-              output +=
-                LEFT +
-                NORMAL_SIZE + // Use medium size for item names
-                chunk.padEnd(nameWidth - 4, " ") +
-                "                 " +
-                NORMAL_SIZE +
-                "\n"; // Add spacing where price, qty, total would be
-            }
-          }
-        }
-
-        // Add extra spacing between items
-        output += "\n";
-      });
-    }
-
-    // Summary with improved formatting
-    if (summary) {
-      output += this.formatBillSummary(summary);
-    }
-
-    // Thank you
-    output += "\n";
-    output += CENTER + MEDIUM_SIZE + "Thank you!" + NORMAL_SIZE + "\n";
-    output += "\n\n\n";
-
-    // Add beep sound
-    output += BEEP;
-
-    return output;
-  }
-
-  /**
-   * Format bill summary
-   * @param {Object} summary - Bill summary
-   * @returns {string} Formatted bill summary
-   */
-  formatBillSummary(summary) {
-    // ESC/POS commands for text alignment and formatting
-    const ESC = "\x1B";
-    const BOLD_ON = `${ESC}E\x01`;
-    const BOLD_OFF = `${ESC}E\x00`;
-    const MEDIUM_SIZE = `${ESC}!\x10`; // Double height (16 = 0x10)
-    const NORMAL_SIZE = `${ESC}!\x00`; // Normal size
-
-    let output = "";
-
-    output += this.divider() + "\n";
-    output +=
-      BOLD_ON +
-      this.keyValue("Subtotal", `Rs.${summary.subTotal.toFixed(2)}`) +
-      BOLD_OFF +
-      "\n";
-
-    output += this.divider() + "\n";
-    output +=
-      this.keyValue(
-        `Discount(${summary.discount}%)`,
-        `-Rs.${summary.discountAmount.toFixed(2)}`
-      ) + "\n";
-
-    // Always print SGST and CGST, even if they are zero
-    output +=
-      this.keyValue("SGST (2.5%)", `Rs.${(summary.sgst || 0).toFixed(2)}`) +
-      "\n";
-    output +=
-      this.keyValue("CGST (2.5%)", `Rs.${(summary.cgst || 0).toFixed(2)}`) +
-      "\n";
-    output +=
-      this.keyValue("Round Off", `-Rs.${summary.rounded.toFixed(2)}`) + "\n";
-
-    output += this.divider() + "\n";
-    output +=
-      BOLD_ON +
-      MEDIUM_SIZE +
-      this.keyValue("Total", `Rs.${summary.total.toFixed(2)}`) +
-      NORMAL_SIZE +
-      BOLD_OFF +
-      "\n";
-
-    // Payment details
-    if (summary.payment) {
-      output += this.formatPaymentDetails(summary.payment);
-    }
-
-    return output;
-  }
-
-  /**
-   * Format payment details
-   * @param {Object} payment - Payment details
-   * @returns {string} Formatted payment details
-   */
-  formatPaymentDetails(payment) {
-    let output = "";
-
-    if (payment.type === "SPLIT" && payment.details) {
-      payment.details.forEach((detail) => {
-        output +=
-          this.keyValue(detail.method, `Rs.${detail.amount.toFixed(2)}`) + "\n";
-      });
-    }
-
-    return output;
   }
 }
 
