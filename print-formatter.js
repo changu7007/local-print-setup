@@ -731,7 +731,7 @@ class PrintFormatter {
         </div>
         
         <div class="gst-box">
-          <div class="gst-title">SGST(9%)+CGST(9%)=GST(18%)</div>
+          <div class="gst-title">SGST+CGST=GST</div>
           <div class="gst-values">Rs.${Number(summary.sgst || 0).toFixed(
             2
           )} + Rs.${Number(summary.cgst || 0).toFixed(2)} = Rs.${(
