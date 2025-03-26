@@ -583,12 +583,12 @@ async function processJob(job) {
     if (content && content.type && content.content) {
       console.log(`Formatting structured ${content.type} content`);
       if (content.type === "KOT") {
-        formattedContent = await formatter.printContentAsImage(
+        formattedContent = await formatter.printContentAsText(
           content.content,
           "kot"
         );
       } else if (content.type === "BILL") {
-        formattedContent = await formatter.printContentAsImage(
+        formattedContent = await formatter.printContentAsText(
           content.content,
           "bill"
         );
