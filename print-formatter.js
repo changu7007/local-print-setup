@@ -282,8 +282,8 @@ class PrintFormatter {
     const CUT_PARTIAL_FEED = `${GS}V\x41\x03`; // Partial cut with 3-dot feed
     const CUT_FULL_FEED = `${GS}V\x42\x03`; // Full cut with 3-dot feed
 
-    const BEEP = `${ESC}B\x02\x01`; // Beep sound (2 beeps, 1 duration)
-    const FEED_AND_CUT = `${ESC}d\x03${CUT_FULL_FEED}`; // Feed 8 lines and cut
+    // More robust beep command (different printers might use different formats)
+    const BEEP = `${ESC}B\x05\x09\x01`; // 5 beeps, duration 9, interval 1
 
     try {
       console.log("Converting HTML to image...");
@@ -306,13 +306,20 @@ class PrintFormatter {
       // Create the complete print command sequence
       let output = INIT;
       output += printCommands;
+
+      // Add multiple line feeds to ensure enough paper before cutting
+      output += `${ESC}d\x08`; // Feed 8 lines
+
+      // Add the beep command (try more robust beep)
       output += BEEP;
 
-      // Add extra space before cutting - many lines to ensure enough paper is fed
-      output += "\n"; // 12 line feeds for extra space
+      // Try multiple cutting methods for better compatibility
+      // Some printers might respond to one but not the other
+      output += CUT_FULL_FEED; // Try full cut with feed
+      output += CUT_FULL; // Try standard full cut
 
-      // Add the cut command sequence - try multiple approaches for compatibility
-      output += FEED_AND_CUT; // This is the most reliable cutting sequence
+      // As a fallback, add a line feed and partial cut in case full cut isn't supported
+      output += `${ESC}d\x03${CUT_PARTIAL}`;
 
       return output;
     } catch (error) {
