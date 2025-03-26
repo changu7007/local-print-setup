@@ -5,6 +5,10 @@
  * using ESC/POS commands.
  */
 
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
 class PrintFormatter {
   constructor(config = {}) {
     // Default configuration for the printer
@@ -13,6 +17,22 @@ class PrintFormatter {
       deviceScaleFactor: config.deviceScaleFactor || 1,
       fontSize: config.fontSize || 24,
       ...config,
+    };
+
+    // Initialize the cache
+    this.imageCache = new Map();
+    this.cacheDir = path.join(process.cwd(), "print-cache");
+
+    // Create cache directory if it doesn't exist
+    if (!fs.existsSync(this.cacheDir)) {
+      fs.mkdirSync(this.cacheDir, { recursive: true });
+    }
+
+    // Cache configuration
+    this.cacheConfig = {
+      enabled: true, // Enable/disable caching
+      maxAge: 24 * 60 * 60 * 1000, // Cache expiration: 24 hours
+      persistToDisk: true, // Save cache to disk
     };
   }
 
@@ -25,6 +45,56 @@ class PrintFormatter {
       ...this.config,
       ...newConfig,
     };
+  }
+
+  /**
+   * Update cache configuration
+   * @param {Object} cacheConfig - New cache configuration
+   */
+  updateCacheConfig(cacheConfig) {
+    this.cacheConfig = {
+      ...this.cacheConfig,
+      ...cacheConfig,
+    };
+  }
+
+  /**
+   * Generate a unique hash for the content to use as cache key
+   * @param {Object} content - Content object (KOT or Bill)
+   * @param {String} type - "kot" or "bill"
+   * @returns {String} Hash string
+   */
+  generateContentHash(content, type) {
+    // Create a deterministic JSON string (sorted keys)
+    const contentString = JSON.stringify({
+      content: this.sortObjectKeys(content),
+      type,
+      config: this.config,
+    });
+
+    // Generate SHA-256 hash
+    return crypto.createHash("sha256").update(contentString).digest("hex");
+  }
+
+  /**
+   * Helper to sort object keys for deterministic JSON stringification
+   * @private
+   */
+  sortObjectKeys(obj) {
+    if (typeof obj !== "object" || obj === null) {
+      return obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map((item) => this.sortObjectKeys(item));
+    }
+
+    return Object.keys(obj)
+      .sort()
+      .reduce((result, key) => {
+        result[key] = this.sortObjectKeys(obj[key]);
+        return result;
+      }, {});
   }
 
   /**
@@ -41,20 +111,157 @@ class PrintFormatter {
         this.updateConfig(options.printerConfig);
       }
 
+      // Update cache config if provided
+      if (options.cacheConfig) {
+        this.updateCacheConfig(options.cacheConfig);
+      }
+
       // Mark the content to indicate it was printed as an image
       content._printMethod = "html-image";
 
-      // 1. Generate HTML from content
-      const htmlContent = this.formatToHTML(content, type);
+      // Generate a unique hash for this content
+      const contentHash = this.generateContentHash(content, type);
 
-      // 2. Convert HTML to image and format for printer
-      const printCommands = await this.printAsImage(htmlContent);
+      // Check if content is in memory cache
+      let imageResult;
+      let useCache = this.cacheConfig.enabled && !options.skipCache;
+
+      if (useCache) {
+        // Try to get from memory cache first
+        imageResult = this.imageCache.get(contentHash);
+
+        // If not in memory but disk cache is enabled, try to load from disk
+        if (!imageResult && this.cacheConfig.persistToDisk) {
+          imageResult = await this.loadCacheFromDisk(contentHash);
+
+          // If found on disk, add to memory cache too
+          if (imageResult) {
+            this.imageCache.set(contentHash, imageResult);
+          }
+        }
+
+        if (imageResult) {
+          console.log("Using cached rasterized image");
+        }
+      }
+
+      // If not cached or cache disabled, generate the image
+      if (!imageResult) {
+        console.log("Generating new rasterized image");
+
+        // 1. Generate HTML from content
+        const htmlContent = this.formatToHTML(content, type);
+
+        // 2. Convert HTML to image and format for printer
+        imageResult = await this.convertHTMLToImageNode(htmlContent);
+
+        // 3. Store in cache if enabled
+        if (useCache) {
+          this.imageCache.set(contentHash, imageResult);
+
+          // Save to disk if configured
+          if (this.cacheConfig.persistToDisk) {
+            await this.saveCacheToDisk(contentHash, imageResult);
+          }
+        }
+      }
+
+      // Format the image for printer
+      const printCommands = this.formatImageForPrinter(imageResult);
 
       // 3. Return the ESC/POS commands
       return printCommands;
     } catch (error) {
       console.error(`Error printing ${type} as image:`, error);
       throw new Error(`Failed to print ${type}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Save cache entry to disk
+   * @param {String} hash - Content hash
+   * @param {Object} imageResult - Image data to cache
+   */
+  async saveCacheToDisk(hash, imageResult) {
+    try {
+      const cachePath = path.join(this.cacheDir, `${hash}.json`);
+
+      // Create a cache entry with metadata
+      const cacheEntry = {
+        timestamp: Date.now(),
+        imageData: imageResult.imageData.toString("base64"), // Convert buffer to base64
+        width: imageResult.width,
+        height: imageResult.height,
+        monochromeData: Buffer.from(imageResult.monochromeData).toString(
+          "base64"
+        ),
+      };
+
+      // Write to disk
+      fs.writeFileSync(cachePath, JSON.stringify(cacheEntry));
+      console.log(`Cache saved to disk: ${cachePath}`);
+    } catch (error) {
+      console.error("Error saving cache to disk:", error);
+    }
+  }
+
+  /**
+   * Load cache entry from disk
+   * @param {String} hash - Content hash
+   * @returns {Object|null} Image data or null if not found/expired
+   */
+  async loadCacheFromDisk(hash) {
+    try {
+      const cachePath = path.join(this.cacheDir, `${hash}.json`);
+
+      // Check if cache file exists
+      if (!fs.existsSync(cachePath)) {
+        return null;
+      }
+
+      // Read and parse cache file
+      const cacheData = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+
+      // Check if cache is expired
+      if (Date.now() - cacheData.timestamp > this.cacheConfig.maxAge) {
+        console.log(`Cache expired for ${hash}, removing file`);
+        fs.unlinkSync(cachePath);
+        return null;
+      }
+
+      // Reconstruct image data from cache
+      return {
+        imageData: Buffer.from(cacheData.imageData, "base64"),
+        width: cacheData.width,
+        height: cacheData.height,
+        monochromeData: Buffer.from(cacheData.monochromeData, "base64"),
+      };
+    } catch (error) {
+      console.error("Error loading cache from disk:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Clears all cache entries
+   */
+  clearCache() {
+    // Clear memory cache
+    this.imageCache.clear();
+
+    // Clear disk cache if enabled
+    if (this.cacheConfig.persistToDisk) {
+      try {
+        const files = fs.readdirSync(this.cacheDir);
+        for (const file of files) {
+          if (file.endsWith(".json")) {
+            fs.unlinkSync(path.join(this.cacheDir, file));
+          }
+        }
+        console.log("Disk cache cleared");
+      } catch (error) {
+        console.error("Error clearing disk cache:", error);
+      }
     }
   }
 
@@ -230,7 +437,7 @@ class PrintFormatter {
       // Delete the temporary image file
       if (tempImagePath && fs.existsSync(tempImagePath)) {
         try {
-          fs.unlinkSync(tempImagePath);
+          // fs.unlinkSync(tempImagePath);
           console.log(`Deleted temporary image: ${tempImagePath}`);
         } catch (e) {
           console.error(`Failed to delete temporary image: ${e.message}`);
@@ -417,7 +624,7 @@ class PrintFormatter {
             <span>To: ${header.customerName}</span>
           </div>
           <div style="flex: 1; text-align: right;">
-            <span class="order-type">Table / Mode: ${header.orderType}</span>
+            <span class="order-type">Table: ${header.orderType}</span>
           </div>
         </div>
         
@@ -646,7 +853,7 @@ class PrintFormatter {
         
         <div class="divider"></div>
         
-        <div class="center medium">INVOICE: ${header.invoice || "#3/2025"}</div>
+        <div class="center medium">INVOICE: ${header.invoice || "NA"}</div>
         
         <div class="divider"></div>
         
@@ -655,7 +862,7 @@ class PrintFormatter {
             <span>To: ${header.customerName}</span>
           </div>
           <div style="flex: 1; text-align: right;">
-            <span class="bold">Table / Mode: ${header.orderType}</span>
+            <span class="bold">Order Mode: ${header.orderType}</span>
           </div>
         </div>
         
@@ -724,7 +931,7 @@ class PrintFormatter {
         </div>
         
         <div class="key-value-full">
-          <div class="summary-label">GST (18%)</div>
+          <div class="summary-label">GST</div>
           <div class="summary-value">+Rs. ${(
             Number(summary.sgst || 0) + Number(summary.cgst || 0)
           ).toFixed(2)}</div>
@@ -760,7 +967,6 @@ class PrintFormatter {
         <div class="thank-you">Thank you & Visit us again!</div>
         
        
-        
         <!-- Add extra space at the bottom for cutting -->
         <div style="height: 30px;"></div>
       </body>

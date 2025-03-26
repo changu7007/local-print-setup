@@ -6,3 +6,5 @@
 .env.test.local
 /node_modules
 /dist
+./print-cache
+./print-cache/*

@@ -221,13 +221,77 @@ function extractPaperWidth(job) {
   return "MM_80";
 }
 
+// Add this near the top of the file with other global variables
+const jobCache = new Map(); // Cache for previously processed jobs
+const CACHE_TTL = 60 * 1000; // 60 seconds cache TTL
+const MAX_CONCURRENCY = 1; // Only process one print job at a time
+let isProcessingJob = false;
+const pendingJobs = [];
+
+// Add a connection pool for printers
+const printerConnections = new Map();
+
 /**
  * Process and print a job
  * @param {Object} job - The print job to process
  */
 async function processJob(job) {
+  // If already processing, queue this job
+  if (isProcessingJob) {
+    console.log(
+      `Job ${job.id || "unknown"} queued, waiting for current job to complete`
+    );
+    return new Promise((resolve) => {
+      pendingJobs.push({
+        job,
+        resolve,
+      });
+    });
+  }
+
+  isProcessingJob = true;
+  const startTime = Date.now();
+
   try {
-    console.log(`Processing job: ${job.id}`);
+    console.log(`Started processing job: ${job.id || "unknown"}`);
+
+    // Generate a cache key based on job content
+    const cacheKey = job.printerId + "-" + JSON.stringify(job.content);
+
+    // Check if we have a cached response
+    const cachedResponse = jobCache.get(cacheKey);
+    if (cachedResponse && Date.now() - cachedResponse.timestamp < CACHE_TTL) {
+      console.log(
+        `Using cached formatted content for job: ${job.id || "unknown"}`
+      );
+
+      // Still print the cached content
+      const printerConfig = getPrinterConfig(job.printerId);
+      const success = await printToTCPPrinter(
+        printerConfig.ipAddress,
+        printerConfig.port || 9100,
+        cachedResponse.formattedContent
+      );
+
+      // Update job status if needed
+      if (job.id) {
+        await updateJobStatus(
+          job.id,
+          success,
+          success ? null : "Failed to print"
+        );
+      }
+
+      const result = { success, error: success ? null : "Failed to print" };
+      console.log(
+        `Completed job ${job.id || "unknown"} from cache in ${
+          Date.now() - startTime
+        }ms`
+      );
+      return result;
+    }
+
+    console.log(`Processing job: ${job.id || "unknown"}`);
 
     // Validate job object
     if (!job) {
@@ -617,6 +681,18 @@ async function processJob(job) {
       console.error(`Failed to print job ${job.id || "unknown"}`);
     }
 
+    // Cache the formatted content for future use
+    if (success && formattedContent) {
+      jobCache.set(cacheKey, {
+        timestamp: Date.now(),
+        formattedContent,
+      });
+      console.log(`Cached formatted content for job: ${job.id || "unknown"}`);
+    }
+
+    console.log(
+      `Completed job ${job.id || "unknown"} in ${Date.now() - startTime}ms`
+    );
     return { success, error: success ? null : "Failed to print" };
   } catch (error) {
     console.error(`Error processing job ${job.id || "unknown"}:`, error);
@@ -624,51 +700,62 @@ async function processJob(job) {
       await updateJobStatus(job.id, false, error.message);
     }
     return { success: false, error: error.message };
+  } finally {
+    isProcessingJob = false;
+
+    // Process next job from queue if any
+    if (pendingJobs.length > 0) {
+      const nextJob = pendingJobs.shift();
+      console.log(
+        `Processing next job from queue (${pendingJobs.length} remaining)`
+      );
+      processJob(nextJob.job).then(nextJob.resolve);
+    }
   }
 }
 
-/**
- * Print to a TCP printer
- * @param {string} ipAddress - Printer IP address
- * @param {number} port - Printer port
- * @param {string} data - Data to print
- * @returns {Promise<boolean>} Success status
- */
+// Modified printToTCPPrinter function
 function printToTCPPrinter(ipAddress, port, data) {
   return new Promise((resolve) => {
+    const startTime = Date.now();
     try {
-      const client = new net.Socket();
+      const key = `${ipAddress}:${port}`;
+      let client;
+
+      // Check if we have an existing connection
+      if (
+        printerConnections.has(key) &&
+        printerConnections.get(key).connected
+      ) {
+        client = printerConnections.get(key);
+        console.log(`Reusing existing printer connection to ${key}`);
+      } else {
+        client = new net.Socket();
+        client.setTimeout(3000);
+
+        // Store in connection pool
+        printerConnections.set(key, client);
+
+        // Connect to printer
+        client.connect(port, ipAddress);
+      }
+
       let resolved = false;
 
-      // Set timeout
-      client.setTimeout(10000); // 10 seconds
-
       client.on("connect", () => {
-        console.log(`Connected to printer at ${ipAddress}:${port}`);
+        console.log(
+          `Connected to printer at ${ipAddress}:${port} in ${
+            Date.now() - startTime
+          }ms`
+        );
 
         try {
           // Convert string to buffer, preserving binary data
-          // This ensures ESC/POS commands are properly sent to the printer
           const buffer = Buffer.from(data, "binary");
 
-          // Check if the data already contains a cut command
-          // Common cut commands: ESC d, GS V
-          const hasCutCommand =
-            data.includes("\x1Bd") || // ESC d
-            data.includes("\x1BV") || // ESC V
-            data.includes("\x1dV"); // GS V
-
-          let finalBuffer;
-          if (!hasCutCommand) {
-            // Add cut command at the end if not already present
-            const cutCommand = Buffer.from([0x1d, 0x56, 0x41, 0x10]); // GS V A 16 - Full cut with feed
-            finalBuffer = Buffer.concat([buffer, cutCommand]);
-          } else {
-            finalBuffer = buffer;
-          }
-
-          // Send data
-          client.write(finalBuffer, (err) => {
+          // Send data with higher buffer size
+          client.bufferSize = 65536; // 64KB buffer
+          client.write(buffer, (err) => {
             if (err) {
               console.error("Error writing to printer:", err);
               client.end();
@@ -677,7 +764,9 @@ function printToTCPPrinter(ipAddress, port, data) {
                 resolve(false);
               }
             } else {
-              console.log("Data sent to printer successfully");
+              console.log(
+                `Data sent to printer in ${Date.now() - startTime}ms`
+              );
               client.end();
               if (!resolved) {
                 resolved = true;
@@ -724,11 +813,8 @@ function printToTCPPrinter(ipAddress, port, data) {
           resolve(false);
         }
       });
-
-      // Connect to printer
-      client.connect(port, ipAddress);
     } catch (error) {
-      console.error("Error in printToTCPPrinter:", error);
+      console.error(`Error in printToTCPPrinter:`, error);
       resolve(false);
     }
   });
