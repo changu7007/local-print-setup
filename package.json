@@ -4,11 +4,12 @@
   "description": "Local print agent for restaurant POS system",
   "main": "local-print-agent.js",
   "scripts": {
-    "start": "node local-print-agent.js",
-    "dev": "nodemon local-print-agent.js",
+    "start": "node scripts/start-with-ngrok.js",
+    "dev": "node local-print-agent.js",
     "build-electron": "electron-builder",
     "start-electron": "electron .",
-    "setup-autostart": "node auto-start.js"
+    "setup-autostart": "node auto-start.js",
+    "setup-autostart-ngrok": "node scripts/auto-start-with-ngrok.js"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -19,6 +20,7 @@
     "html-to-image": "^1.11.13",
     "jimp": "^1.6.0",
     "net": "^1.0.2",
+    "ngrok": "^5.0.0-beta.2",
     "node-thermal-printer": "^4.4.4",
     "puppeteer": "^24.4.0",
     "ws": "^8.14.2"
