@@ -936,7 +936,7 @@ class PrintFormatter {
         
         <div class="divider"></div>
         
-        <div class="center medium">INVOICE: ${header.invoice || "NA"}</div>
+        <div class="center medium">Bill No: ${header.invoice || "NA"}</div>
         
         <div class="divider"></div>
         
@@ -945,7 +945,7 @@ class PrintFormatter {
             <span>To: ${header.customerName}</span>
           </div>
           <div style="flex: 1; text-align: right;">
-            <span class="bold">Order Mode: ${header.orderType}</span>
+            <span class="bold"> ${header.orderType}</span>
           </div>
         </div>
         
@@ -1345,7 +1345,7 @@ class PrintFormatter {
     output +=
       CENTER +
       MEDIUM_SIZE +
-      `BILL: ${header.invoice || "NA"}` +
+      `BILL NO: ${header.invoice || "NA"}` +
       NORMAL_SIZE +
       "\n";
 
@@ -1672,6 +1672,31 @@ class PrintFormatter {
     const padding =
       this.config.charsPerLine - truncatedKey.length - value.length;
     return `${truncatedKey}${" ".repeat(Math.max(0, padding))}${value}`;
+  }
+
+  /**
+   * Generate a unique hash for content caching
+   * @param {Object} content - Content to hash
+   * @param {String} type - Content type
+   * @returns {string} Content hash
+   * @private
+   */
+  generateContentHash(content, type) {
+    try {
+      // Create a string that includes both content and type
+      const contentString = JSON.stringify({
+        content,
+        type,
+        config: this.config, // Include config to ensure different configs get different caches
+      });
+
+      // Generate SHA-256 hash
+      return crypto.createHash("sha256").update(contentString).digest("hex");
+    } catch (error) {
+      console.error("Error generating content hash:", error);
+      // Fallback to a timestamp-based hash if JSON stringify fails
+      return `${type}-${Date.now()}`;
+    }
   }
 }
 

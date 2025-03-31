@@ -127,7 +127,7 @@ function getPrinterConfig(printerId) {
       ipAddress: printerConfig.ipAddress || printerConfig.address,
       port: printerConfig.port || 9100,
       type: printerConfig.type || "tcp",
-      paperWidth: printerConfig.paperWidth || "MM_58",
+      paperWidth: printerConfig.paperWidth || "MM_80",
     };
   }
 
@@ -583,15 +583,29 @@ async function processJob(job) {
     if (content && content.type && content.content) {
       console.log(`Formatting structured ${content.type} content`);
       if (content.type === "KOT") {
-        formattedContent = await formatter.printContentAsText(
-          content.content,
-          "kot"
-        );
+        if (job.options.printFormat === "TEXT") {
+          formattedContent = await formatter.printContentAsText(
+            content.content,
+            "kot"
+          );
+        } else if (job.options.printFormat === "IMAGE") {
+          formattedContent = await formatter.printContentAsImage(
+            content.content,
+            "kot"
+          );
+        }
       } else if (content.type === "BILL") {
-        formattedContent = await formatter.printContentAsText(
-          content.content,
-          "bill"
-        );
+        if (job.options.printFormat === "TEXT") {
+          formattedContent = await formatter.printContentAsText(
+            content.content,
+            "bill"
+          );
+        } else if (job.options.printFormat === "IMAGE") {
+          formattedContent = await formatter.printContentAsImage(
+            content.content,
+            "bill"
+          );
+        }
       } else {
         console.warn(`Unknown content type: ${content.type}`);
         // Try to format as generic content
