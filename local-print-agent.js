@@ -578,29 +578,30 @@ async function processJob(job) {
 
     // Format the content based on type
     let formattedContent = "";
+    const printFormat = job.options.printFormat || "TEXT";
 
     // Check if we have structured content with type and content properties
     if (content && content.type && content.content) {
       console.log(`Formatting structured ${content.type} content`);
       if (content.type === "KOT") {
-        if (job.options.printFormat === "TEXT") {
+        if (printFormat === "TEXT") {
           formattedContent = await formatter.printContentAsText(
             content.content,
             "kot"
           );
-        } else if (job.options.printFormat === "IMAGE") {
+        } else if (printFormat === "IMAGE") {
           formattedContent = await formatter.printContentAsImage(
             content.content,
             "kot"
           );
         }
       } else if (content.type === "BILL") {
-        if (job.options.printFormat === "TEXT") {
+        if (printFormat === "TEXT") {
           formattedContent = await formatter.printContentAsText(
             content.content,
             "bill"
           );
-        } else if (job.options.printFormat === "IMAGE") {
+        } else if (printFormat === "IMAGE") {
           formattedContent = await formatter.printContentAsImage(
             content.content,
             "bill"

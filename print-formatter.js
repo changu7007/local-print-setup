@@ -1278,6 +1278,10 @@ class PrintFormatter {
     // Only add 1 line of extra space instead of multiple
     output += "\n";
 
+    // Add beep sound
+    const BEL = "\x07"; // Bell character for beep
+    output += BEL + BEL; // Two beeps using standard bell character
+
     return output;
   }
 
@@ -1555,6 +1559,10 @@ class PrintFormatter {
 
     // End BOLD for the entire content
     output += BOLD_OFF;
+
+    // Add beep sound
+    const BEL = "\x07"; // Bell character for beep
+    output += BEL + BEL; // Two beeps using standard bell character
 
     return output;
   }
